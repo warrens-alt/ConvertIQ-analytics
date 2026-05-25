@@ -25,6 +25,13 @@ type FieldProfile = {
   sampleValues: string[];
 };
 
+type EffectiveDateFilter = {
+  applied: boolean;
+  from: string;
+  to: string;
+  defaultWindowApplied: boolean;
+};
+
 const DEFAULT_POWERBI_QUERYDATA_URL = 'https://wabi-south-africa-north-a-primary-api.analysis.windows.net/public/reports/querydata?synchronous=true';
 const DEFAULT_POWERBI_RESOURCE_KEY = '4d7a85aa-c545-4d45-b3a6-719c3c805af7';
 const POWERBI_DATASET_ID = '59cef14d-8dd0-4016-a349-c227162a0fee';
@@ -41,6 +48,7 @@ const PII_FIELDS = new Set([
 ]);
 
 const DATE_KEYS = ['from', 'to', 'start', 'end', 'date_from', 'date_to'];
+const ROW_DATE_FIELDS = ['date', 'call_date', 'entry_date', 'modify_date', 'last_local_call_time', 'activation', 'capture_complete', 'nett_app', 'date_created'];
 const DEFAULT_WINDOW_DAYS = 7;
 const DEFAULT_MAX_ROWS = 5000;
 const ABSOLUTE_MAX_ROWS = 15000;
@@ -162,8 +170,22 @@ const getRecordLimit = (query: URLSearchParams) => {
   return Math.min(Math.floor(parsed), ABSOLUTE_RECORD_LIMIT);
 };
 
-const applySafeQueryDefaults = (upstream: URL, query: URLSearchParams, maxRows: number) => {
+const dateBoundsFromQuery = (query: URLSearchParams): EffectiveDateFilter => {
   const hadDate = DATE_KEYS.some((key) => query.has(key));
+  let from = query.get('from') || query.get('start') || query.get('date_from') || '';
+  let to = query.get('to') || query.get('end') || query.get('date_to') || '';
+  if (!hadDate) {
+    const toDateValue = new Date();
+    const fromDateValue = new Date(toDateValue);
+    fromDateValue.setUTCDate(toDateValue.getUTCDate() - DEFAULT_WINDOW_DAYS);
+    from = isoDate(fromDateValue);
+    to = isoDate(toDateValue);
+  }
+  return { applied: Boolean(from || to), from, to, defaultWindowApplied: !hadDate };
+};
+
+const applySafeQueryDefaults = (upstream: URL, query: URLSearchParams, maxRows: number) => {
+  const filter = dateBoundsFromQuery(query);
   for (const [key, value] of query.entries()) {
     if (['from', 'to', 'start', 'end', 'date_from', 'date_to', 'limit', 'maxRows'].includes(key)) upstream.searchParams.set(key === 'maxRows' ? 'limit' : key, value);
   }
@@ -172,21 +194,44 @@ const applySafeQueryDefaults = (upstream: URL, query: URLSearchParams, maxRows: 
   upstream.searchParams.set('page_size', String(maxRows));
   upstream.searchParams.set('max', String(maxRows));
 
-  if (!hadDate) {
-    const to = new Date();
-    const from = new Date(to);
-    from.setUTCDate(to.getUTCDate() - DEFAULT_WINDOW_DAYS);
-    const fromValue = isoDate(from);
-    const toValue = isoDate(to);
-    upstream.searchParams.set('from', fromValue);
-    upstream.searchParams.set('to', toValue);
-    upstream.searchParams.set('start', fromValue);
-    upstream.searchParams.set('end', toValue);
-    upstream.searchParams.set('date_from', fromValue);
-    upstream.searchParams.set('date_to', toValue);
+  if (filter.from) {
+    upstream.searchParams.set('from', filter.from);
+    upstream.searchParams.set('start', filter.from);
+    upstream.searchParams.set('date_from', filter.from);
+  }
+  if (filter.to) {
+    upstream.searchParams.set('to', filter.to);
+    upstream.searchParams.set('end', filter.to);
+    upstream.searchParams.set('date_to', filter.to);
   }
 
-  return { defaultWindowApplied: !hadDate };
+  return filter;
+};
+
+const rowDate = (row: JsonRow): string | null => {
+  for (const field of ROW_DATE_FIELDS) {
+    const parsed = toDate(row[field]);
+    if (parsed) return parsed;
+  }
+  return null;
+};
+
+const filterRowsByDate = (rows: JsonRow[], filter: EffectiveDateFilter) => {
+  if (!filter.applied) return { rows, excluded: 0, undated: 0 };
+  let excluded = 0;
+  let undated = 0;
+  const filtered = rows.filter((row) => {
+    const date = rowDate(row);
+    if (!date) {
+      undated += 1;
+      excluded += 1;
+      return false;
+    }
+    const keep = (!filter.from || date >= filter.from) && (!filter.to || date <= filter.to);
+    if (!keep) excluded += 1;
+    return keep;
+  });
+  return { rows: filtered, excluded, undated };
 };
 
 const extractRows = (payload: unknown): unknown[] => {
@@ -270,7 +315,7 @@ const aggregateRows = (rows: JsonRow[], source: SourceName, recordLimit: number)
   const byStatus = new Map<string, Record<string, number | string>>();
 
   for (const row of rows) {
-    const date = toDate(row.date ?? row.call_date ?? row.entry_date ?? row.modify_date ?? row.activation ?? row.capture_complete ?? row.date_created) ?? 'Undated';
+    const date = rowDate(row) ?? 'Undated';
     const vendor = classifyVendor(row);
     const agent = String(row.agent ?? row.user ?? row.full_name ?? 'Unassigned');
     const status = statusFamily(row.status ?? row.call_result ?? row.query);
@@ -439,8 +484,9 @@ const fetchPowerBiQuery = async (env: Env, queryName: string, columns: string[],
 };
 
 const fetchPowerBi = async (env: Env, query: URLSearchParams) => {
-  const from = query.get('from') || query.get('date_from') || '2024-01-01';
-  const to = query.get('to') || query.get('date_to') || isoDate(new Date());
+  const filter = dateBoundsFromQuery(query);
+  const from = filter.from || '2024-01-01';
+  const to = filter.to || isoDate(new Date());
   const recordLimit = getRecordLimit(query);
   const startedAt = new Date().toISOString();
   const requests = [
@@ -513,7 +559,9 @@ const fetchPowerBi = async (env: Env, query: URLSearchParams) => {
 
   try {
     const responses = await Promise.all(requests.map((request) => fetchPowerBiQuery(env, request.name, request.columns, request.body)));
-    const rows = responses.flatMap((response) => response.rows).slice(0, recordLimit);
+    const rawRows = responses.flatMap((response) => response.rows);
+    const filtered = filterRowsByDate(rawRows, { ...filter, from, to, applied: true });
+    const rows = filtered.rows.slice(0, recordLimit);
     const failures = responses.filter((response) => !response.ok);
     return {
       source: 'powerbi',
@@ -523,9 +571,15 @@ const fetchPowerBi = async (env: Env, query: URLSearchParams) => {
       status: failures[0]?.status ?? 200,
       startedAt,
       completedAt: new Date().toISOString(),
-      upstreamCount: rows.length,
+      upstreamCount: rawRows.length,
+      rawRows: rawRows.length,
+      filteredRows: filtered.rows.length,
+      excludedByDate: filtered.excluded,
+      undatedRowsExcluded: filtered.undated,
       rows: rows.length,
       recordLimit,
+      filters: { from, to, applied: true, defaultWindowApplied: filter.defaultWindowApplied },
+      defaultWindowApplied: filter.defaultWindowApplied,
       queryDataEndpoint: env.POWERBI_QUERYDATA_URL || DEFAULT_POWERBI_QUERYDATA_URL,
       reportTitle: 'Rubix Reports Power BI Production Data',
       error: failures.length ? failures.map((failure) => failure.error).join(' | ') : undefined,
@@ -548,7 +602,7 @@ const fetchSource = async (source: ApiSourceName, env: Env, query: URLSearchPara
   const maxRows = getMaxRows(query);
   const recordLimit = getRecordLimit(query);
   const upstream = new URL(base);
-  const safety = applySafeQueryDefaults(upstream, query, maxRows);
+  const filter = applySafeQueryDefaults(upstream, query, maxRows);
   const auth = btoa(`${username}:${password}`);
   const startedAt = new Date().toISOString();
 
@@ -565,9 +619,9 @@ const fetchSource = async (source: ApiSourceName, env: Env, query: URLSearchPara
     }
 
     const rawRows = extractRows(payload);
-    const objects = rawRows
-      .slice(0, maxRows)
-      .filter((row): row is JsonRow => Boolean(row) && typeof row === 'object' && !Array.isArray(row));
+    const rawObjects = rawRows.filter((row): row is JsonRow => Boolean(row) && typeof row === 'object' && !Array.isArray(row));
+    const filtered = filterRowsByDate(rawObjects, filter);
+    const objects = filtered.rows.slice(0, maxRows);
     const upstreamCount = payload && typeof payload === 'object' && 'count' in payload ? Number((payload as { count?: unknown }).count) : rawRows.length;
 
     return {
@@ -578,11 +632,16 @@ const fetchSource = async (source: ApiSourceName, env: Env, query: URLSearchPara
       startedAt,
       completedAt: new Date().toISOString(),
       upstreamCount: Number.isFinite(upstreamCount) ? upstreamCount : rawRows.length,
+      rawRows: rawObjects.length,
+      filteredRows: filtered.rows.length,
+      excludedByDate: filtered.excluded,
+      undatedRowsExcluded: filtered.undated,
       rows: objects.length,
-      truncated: rawRows.length > objects.length,
+      truncated: filtered.rows.length > objects.length,
       maxRows,
       recordLimit,
-      defaultWindowApplied: safety.defaultWindowApplied,
+      defaultWindowApplied: filter.defaultWindowApplied,
+      filters: filter,
       analytics: aggregateRows(objects, source, recordLimit)
     };
   } catch (error) {
@@ -605,5 +664,5 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
 
   const source: SourceName = sourceParam === 'ontact' ? 'ontact' : sourceParam === 'powerbi' ? 'powerbi' : 'onvest';
   const result = source === 'powerbi' ? await fetchPowerBi(env, url.searchParams) : await fetchSource(source, env, url.searchParams);
-  return json({ ok: result.ok, mode: 'resource-safe-live-api-sync-no-database', generatedAt: new Date().toISOString(), results: [result] });
+  return json({ ok: result.ok, mode: 'resource-safe-live-api-sync-no-database-universal-filtering', generatedAt: new Date().toISOString(), results: [result] });
 };
