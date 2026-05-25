@@ -117,6 +117,12 @@ function mergeResults(results: AnalyticsResult[]) {
   };
 }
 
+function isPayload(value: unknown): value is Payload {
+  if (!value || typeof value !== 'object') return false;
+  const maybe = value as Partial<Payload>;
+  return typeof maybe.ok === 'boolean' && typeof maybe.generatedAt === 'string' && Array.isArray(maybe.results);
+}
+
 function StatCard({ title, value, sub, icon: Icon }: { title: string; value: string; sub: string; icon: React.ElementType }) {
   return <section className="card stat-card"><div className="stat-icon"><Icon size={18}/></div><div><p>{title}</p><strong>{value}</strong><span>{sub}</span></div></section>;
 }
@@ -138,7 +144,8 @@ function App() {
       if (from) params.set('from', from);
       if (to) params.set('to', to);
       const res = await fetch(`/api/analytics?${params}`);
-      const data = await res.json();
+      const data: unknown = await res.json();
+      if (!isPayload(data)) throw new Error('The API route returned an unexpected payload shape.');
       setPayload(data);
       if (!data.ok) setError('One or more API sources need attention. Check configuration/status cards below.');
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
