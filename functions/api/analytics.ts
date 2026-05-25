@@ -278,6 +278,7 @@ const aggregateRows = (rows: JsonRow[], source: SourceName, recordLimit: number)
     const vendorBucket = incrementBucket(byVendor, 'vendor', vendor);
     const agentBucket = incrementBucket(byAgent, 'agent', agent);
     const statusBucket = incrementBucket(byStatus, 'status', status);
+    if (row.call_date || row.uniqueid) totals.__call_records = (totals.__call_records ?? 0) + 1;
 
     for (const [field, value] of Object.entries(row)) {
       if (PII_FIELDS.has(field)) {
@@ -303,11 +304,11 @@ const aggregateRows = (rows: JsonRow[], source: SourceName, recordLimit: number)
     fetchedLeads: totals.Fetched_Leads ?? 0,
     acceptedLeads: totals.Accepted_Leads ?? totals.Total_Leads_Delivered_OnTact ?? 0,
     qualifiedLeads: totals.Qualified_Leads ?? 0,
-    sales: (totals.MTN_Sales ?? 0) + (totals.Total_Leads_Sold_A ?? 0) + (totals.Total_Leads_Sold_B ?? 0) + (totals.Total_Leads_Sold_C ?? 0) + (totals.Total_Leads_Sold_D ?? 0),
+    sales: (totals.MTN_Sales ?? 0) + (totals.Total_Leads_Sold_A ?? 0) + (totals.Total_Leads_Sold_B ?? 0) + (totals.Total_Leads_Sold_C ?? 0) + (totals.Total_Leads_Sold_D ?? 0) + (totals.Total_Leads_Sold_Other ?? 0),
     activations: (totals.MTN_Activated_Sales ?? 0) + (totals.count_activation ?? 0) + (totals.total_activations ?? 0),
     captureComplete: totals.total_capture_complete ?? totals.count_capture_complete ?? 0,
     nettApps: totals.count_nett_app ?? totals.total_nett_apps ?? 0,
-    calls: rows.filter((r) => r.call_date || r.uniqueid).length,
+    calls: totals.__call_records ?? rows.filter((r) => r.call_date || r.uniqueid).length,
     talkSeconds: totals.length_in_sec ?? 0,
     answerRate: totals.MTN_Dialed_Leads ? (totals.MTN_Answered_Calls ?? 0) / totals.MTN_Dialed_Leads : 0,
     acceptedRate: totals.Fetched_Leads ? (totals.Accepted_Leads ?? 0) / totals.Fetched_Leads : 0,
@@ -459,14 +460,54 @@ const fetchPowerBi = async (env: Env, query: URLSearchParams) => {
       body: makePowerBiBody([pbiSelectColumn('b', 'full_name', 'Agent'), pbiSelectColumn('b', 'team_name', 'Team'), pbiCount('b', 'contract_key', 'Total Activations')], 'activation', from, to, 'agent-activations')
     },
     {
+      name: 'activation_dates',
+      columns: ['activation', 'count_activation'],
+      body: makePowerBiBody([pbiSelectColumn('b', 'activation', 'activation'), pbiCount('b', 'activation', 'Count of activation')], 'activation', from, to, 'activation-dates')
+    },
+    {
+      name: 'segment_capture_complete',
+      columns: ['segment', 'count_capture_complete'],
+      body: makePowerBiBody([pbiSelectColumn('b', 'segment', 'Segment'), pbiCount('b', 'capture_complete', 'Count of capture_complete')], 'capture_complete', from, to, 'segment-capture-complete')
+    },
+    {
+      name: 'team_capture_complete',
+      columns: ['team_name', 'count_capture_complete'],
+      body: makePowerBiBody([pbiSelectColumn('b', 'team_name', 'Team'), pbiCount('b', 'capture_complete', 'Count of capture_complete')], 'capture_complete', from, to, 'team-capture-complete')
+    },
+    {
       name: 'agent_capture_complete',
       columns: ['full_name', 'total_capture_complete'],
       body: makePowerBiBody([pbiSelectColumn('b', 'full_name', 'Agent'), pbiCount('b', 'contract_key', 'Total Capture Complete')], 'capture_complete', from, to, 'agent-capture-complete')
     },
     {
+      name: 'capture_complete_dates',
+      columns: ['capture_complete', 'count_capture_complete'],
+      body: makePowerBiBody([pbiSelectColumn('b', 'capture_complete', 'capture_complete'), pbiCount('b', 'capture_complete', 'Count of capture_complete')], 'capture_complete', from, to, 'capture-complete-dates')
+    },
+    {
+      name: 'segment_nett_apps',
+      columns: ['segment', 'count_nett_app'],
+      body: makePowerBiBody([pbiSelectColumn('b', 'segment', 'Segment'), pbiCount('b', 'nett_app', 'Count of nett_app')], 'nett_app', from, to, 'segment-nett-apps')
+    },
+    {
       name: 'team_nett_apps',
       columns: ['team_name', 'count_nett_app'],
       body: makePowerBiBody([pbiSelectColumn('b', 'team_name', 'Team'), pbiCount('b', 'nett_app', 'Count of nett_app')], 'nett_app', from, to, 'team-nett-apps')
+    },
+    {
+      name: 'agent_nett_apps',
+      columns: ['full_name', 'team_name', 'total_nett_apps'],
+      body: makePowerBiBody([pbiSelectColumn('b', 'full_name', 'Agent'), pbiSelectColumn('b', 'team_name', 'Team'), pbiCount('b', 'contract_key', 'Total Nett Apps')], 'nett_app', from, to, 'agent-nett-apps')
+    },
+    {
+      name: 'nett_app_dates',
+      columns: ['nett_app', 'count_nett_app'],
+      body: makePowerBiBody([pbiSelectColumn('b', 'nett_app', 'nett_app'), pbiCount('b', 'nett_app', 'Count of nett_app')], 'nett_app', from, to, 'nett-app-dates')
+    },
+    {
+      name: 'date_created_on_capture_complete',
+      columns: ['date_created', 'count_date_created'],
+      body: makePowerBiBody([pbiSelectColumn('b', 'date_created', 'Date Created'), pbiCount('b', 'date_created', 'Count of date_created')], 'capture_complete', from, to, 'date-created-capture-complete')
     }
   ];
 
