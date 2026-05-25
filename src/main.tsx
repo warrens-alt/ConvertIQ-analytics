@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BarChart3, DatabaseZap, Gauge, RefreshCw, Search, ShieldCheck, SlidersHorizontal, UsersRound } from 'lucide-react';
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Funnel, FunnelChart, LabelList, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Funnel, FunnelChart, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import './styles.css';
 import './unified.css';
 
@@ -13,11 +13,11 @@ type FieldProfile = { source?: string; field: string; rawField?: string; group: 
 type Analytics = { fields: { numeric: string[]; text: string[] }; fieldCatalog: FieldProfile[]; columns: string[]; totals: Record<string, number>; derived: Record<string, number>; byDate: Record<string, number | string>[]; byVendor: Record<string, number | string>[]; byAgent: Record<string, number | string>[]; byStatus: Record<string, number | string>[]; records: Record<string, unknown>[]; recordsReturned: number; recordLimit: number };
 type AnalyticsResult = { source: string; ok: boolean; configured: boolean; status?: number; type?: string; rows?: number; upstreamCount?: number; truncated?: boolean; maxRows?: number; recordLimit?: number; defaultWindowApplied?: boolean; error?: string; reportTitle?: string; queryDataEndpoint?: string; analytics?: Analytics };
 type Payload = { ok: boolean; mode: string; generatedAt: string; results: AnalyticsResult[] };
+type PowerBiQueryBucket = { query: string; records: number; count_activation: number; total_activations: number; total_capture_complete: number; count_nett_app: number };
 
 const currency = new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR', maximumFractionDigits: 0 });
 const number = new Intl.NumberFormat('en-ZA', { maximumFractionDigits: 0 });
 const pct = new Intl.NumberFormat('en-ZA', { style: 'percent', maximumFractionDigits: 1 });
-const palette = ['#173f35', '#6f8f63', '#b7a16a', '#d8cda9', '#829a9c', '#25364b', '#8b5f3e', '#c8d7c5'];
 
 const n = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : Number(value) || 0);
 const fmt = (value: unknown, key = '') => key.toLowerCase().includes('amount') || key.toLowerCase().includes('spend') || key.toLowerCase().startsWith('cp') ? currency.format(n(value)) : number.format(n(value));
@@ -94,6 +94,19 @@ function StatCard({ title, value, sub, icon: Icon }: { title: string; value: str
   return <section className="card stat-card"><div className="stat-icon"><Icon size={18}/></div><div><p>{title}</p><strong>{value}</strong><span>{sub}</span></div></section>;
 }
 
+function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return <section className="card chart-card"><h2>{title}</h2>{children}</section>;
+}
+
+function MetricTable({ title, rows }: { title: string; rows: { metric: string; value: string }[] }) {
+  return <section className="card table-card"><h2>{title}</h2><div className="table-wrap"><table><tbody>{rows.map((row) => <tr key={row.metric}><td>{row.metric}</td><td>{row.value}</td></tr>)}</tbody></table></div></section>;
+}
+
+function DataTable({ title, rows, columns }: { title: string; rows: Record<string, unknown>[]; columns?: string[] }) {
+  const keys = (columns && columns.length ? columns : Array.from(new Set(rows.flatMap((row) => Object.keys(row))))).slice(0, 120);
+  return <section className={title ? 'card table-card wide' : 'table-card-inner'}>{title && <h2>{title}</h2>}<div className="table-wrap rows-table"><table><thead><tr>{keys.map((key) => <th key={key}>{key}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{keys.map((key) => <td key={key}>{String(row[key] ?? '')}</td>)}</tr>)}</tbody></table></div></section>;
+}
+
 function App() {
   const [payload, setPayload] = useState<Payload | null>(null);
   const [source, setSource] = useState<ApiSource>('unified');
@@ -122,7 +135,8 @@ function App() {
   };
 
   const load = async (nextSource: ApiSource = source) => {
-    setLoading(true); setError('');
+    setLoading(true);
+    setError('');
     try {
       const targets: AtomicSource[] = nextSource === 'unified' ? ['onvest', 'ontact', 'powerbi'] : [nextSource];
       const responses = await Promise.all(targets.map((target) => fetchOne(target, nextSource)));
@@ -146,7 +160,6 @@ function App() {
   const fields = analytics.fieldCatalog;
   const records = analytics.records;
   const columns = analytics.columns;
-  const isUnified = source === 'unified';
   const isPowerBi = source === 'powerbi';
 
   const groups = useMemo(() => ['all', ...Array.from(new Set(fields.map((field) => field.group))).sort()], [fields]);
@@ -165,8 +178,8 @@ function App() {
     { id: 'funnel', label: 'Journey Funnel' }, { id: 'vendors', label: 'Vendors' }, { id: 'operations', label: 'Operations' }, { id: 'powerbi', label: 'Power BI Data' }
   ];
 
-  const sourceTitle = isUnified ? 'Unified ConvertIQ Analytics Dashboard' : source === 'onvest' ? 'Onvest Dashboard API' : source === 'ontact' ? 'Ontact Analytics API' : 'Power BI QueryData';
-  const sourceCopy = isUnified ? 'One command-center view combining Onvest funnel/media metrics, Ontact call-centre records, and Power BI QueryData. Power BI is pulled as data, not embedded as an iframe.' : isPowerBi ? 'Power BI is now treated as a data source. The dashboard calls the Power BI querydata endpoint and transforms the returned rows into charts, totals, parameters and row tables.' : 'Every API parameter is profiled, grouped, totalled where numeric, and shown in the row explorer. Sensitive lead fields are redacted but still listed in the parameter registry.';
+  const sourceTitle = source === 'unified' ? 'Unified ConvertIQ Analytics Dashboard' : source === 'onvest' ? 'Onvest Dashboard API' : source === 'ontact' ? 'Ontact Analytics API' : 'Power BI QueryData';
+  const sourceCopy = source === 'unified' ? 'One command-center view combining Onvest funnel/media metrics, Ontact call-centre records, and Power BI QueryData. Power BI is pulled as data, not embedded as an iframe.' : isPowerBi ? 'Power BI is now treated as a data source. The dashboard calls the Power BI querydata endpoint and transforms returned rows into charts, totals, parameters and row tables.' : 'Every API parameter is profiled, grouped, totalled where numeric, and shown in the row explorer. Sensitive lead fields are redacted but still listed in the parameter registry.';
 
   const funnel = [
     { name: 'Fetched', value: n(derived.fetchedLeads) }, { name: 'Valid ID + Phone', value: n(totals.Total_Leads_WithValid_Phone_ID) || n(derived.fetchedLeads) },
@@ -178,7 +191,17 @@ function App() {
 
   const sourceBreakdown = results.map((item) => ({ source: item.source, rows: item.rows ?? 0, parameters: item.analytics?.fieldCatalog.length ?? 0, records: item.analytics?.records.length ?? 0 }));
   const powerBiRows = source === 'unified' ? records.filter((row) => row.__source === 'powerbi') : records;
-  const powerBiByQuery = Array.from(powerBiRows.reduce((map, row) => { const key = String(row.query ?? 'unknown'); const bucket = map.get(key) ?? { query: key, records: 0, count_activation: 0, total_activations: 0, total_capture_complete: 0, count_nett_app: 0 }; bucket.records += 1; bucket.count_activation += n(row.count_activation); bucket.total_activations += n(row.total_activations); bucket.total_capture_complete += n(row.total_capture_complete); bucket.count_nett_app += n(row.count_nett_app); map.set(key, bucket); return map; }, new Map<string, Record<string, number | string>>()).values());
+  const powerBiByQuery = Array.from(powerBiRows.reduce<Map<string, PowerBiQueryBucket>>((map, row) => {
+    const key = String(row.query ?? 'unknown');
+    const bucket = map.get(key) ?? { query: key, records: 0, count_activation: 0, total_activations: 0, total_capture_complete: 0, count_nett_app: 0 };
+    bucket.records += 1;
+    bucket.count_activation += n(row.count_activation);
+    bucket.total_activations += n(row.total_activations);
+    bucket.total_capture_complete += n(row.total_capture_complete);
+    bucket.count_nett_app += n(row.count_nett_app);
+    map.set(key, bucket);
+    return map;
+  }, new Map<string, PowerBiQueryBucket>()).values());
 
   return <main>
     <aside className="sidebar">
@@ -206,9 +229,5 @@ function App() {
     </section>
   </main>;
 }
-
-function ChartCard({ title, children }: { title: string; children: React.ReactNode }) { return <section className="card chart-card"><h2>{title}</h2>{children}</section>; }
-function MetricTable({ title, rows }: { title: string; rows: { metric: string; value: string }[] }) { return <section className="card table-card"><h2>{title}</h2><div className="table-wrap"><table><tbody>{rows.map((row) => <tr key={row.metric}><td>{row.metric}</td><td>{row.value}</td></tr>)}</tbody></table></div></section>; }
-function DataTable({ title, rows, columns }: { title: string; rows: Record<string, unknown>[]; columns?: string[] }) { const keys = (columns && columns.length ? columns : Array.from(new Set(rows.flatMap((row) => Object.keys(row))))).slice(0, 120); return <section className={title ? 'card table-card wide' : 'table-card-inner'}>{title && <h2>{title}</h2>}<div className="table-wrap rows-table"><table><thead><tr>{keys.map((key) => <th key={key}>{key}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{keys.map((key) => <td key={key}>{String(row[key] ?? '')}</td>)}</tr>)}</tbody></table></div></section>; }
 
 createRoot(document.getElementById('root')!).render(<App />);
