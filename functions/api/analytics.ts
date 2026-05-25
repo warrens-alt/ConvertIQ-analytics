@@ -28,6 +28,11 @@ const DEFAULT_MAX_ROWS = 5000;
 const ABSOLUTE_MAX_ROWS = 15000;
 const DEFAULT_RECORD_LIMIT = 1000;
 const ABSOLUTE_RECORD_LIMIT = 5000;
+const DEFAULT_POWERBI_QUERYDATA_URL = 'https://wabi-south-africa-north-a-primary-api.analysis.windows.net/public/reports/querydata?synchronous=true';
+const DEFAULT_POWERBI_RESOURCE_KEY = '4d7a85aa-c545-4d45-b3a6-719c3c805af7';
+const POWERBI_DATASET_ID = '59cef14d-8dd0-4016-a349-c227162a0fee';
+const POWERBI_REPORT_ID = 'fe973424-23fd-433a-a81f-0f08416228ef';
+const POWERBI_MODEL_ID = 598641;
 const DATE_KEYS = ['from', 'to', 'start', 'end', 'date_from', 'date_to'];
 const ROW_DATE_FIELDS = ['date', 'call_date', 'entry_date', 'modify_date', 'last_local_call_time', 'activation', 'capture_complete', 'nett_app', 'date_created'];
 const PII_FIELDS = new Set(['phone_number', 'alt_phone', 'email', 'vendor_lead_code', 'first_name', 'last_name', 'middle_initial', 'address1', 'address2', 'address3', 'postal_code', 'date_of_birth', 'security_phrase']);
@@ -250,7 +255,7 @@ const authHeadersAndQuery = (env: Env, source: ApiSourceName, upstream: URL) => 
   const secret = env[config.password] || env[config.queryKey];
   const mode = String(env[config.authMode] || 'basic').toLowerCase();
   const queryParam = env[config.queryParam] || 'key';
-  const headers: HeadersInit = { accept: 'application/json' };
+  const headers: Record<string, string> = { accept: 'application/json' };
   if (!secret) return { headers, configured: false, reason: `Missing ${source} API password/query key secret.` };
   if (mode === 'bearer') headers.authorization = `Bearer ${secret}`;
   else if (mode === 'query') upstream.searchParams.set(queryParam, secret);
@@ -288,11 +293,75 @@ const fetchSource = async (source: ApiSourceName, env: Env, query: URLSearchPara
   }
 };
 
+const pbiSelectColumn = (source: string, property: string, label: string) => ({ Column: { Expression: { SourceRef: { Source: source } }, Property: property }, Name: `blue_label_reporting wow_data.${property}`, NativeReferenceName: label });
+const pbiCount = (source: string, property: string, label: string) => ({ Aggregation: { Expression: { Column: { Expression: { SourceRef: { Source: source } }, Property: property } }, Function: 5 }, Name: `CountNonNull(blue_label_reporting wow_data.${property})`, NativeReferenceName: label });
+const pbiDateRange = (source: string, property: string, from: string, to: string) => ({ Condition: { And: { Left: { Comparison: { ComparisonKind: 2, Left: { Column: { Expression: { SourceRef: { Source: source } }, Property: property } }, Right: { Literal: { Value: `datetime'${from}T00:00:00'` } } } }, Right: { Comparison: { ComparisonKind: 3, Left: { Column: { Expression: { SourceRef: { Source: source } }, Property: property } }, Right: { Literal: { Value: `datetime'${to}T23:59:59'` } } } } } } });
+const pbiNotNull = (source: string, property: string) => ({ Condition: { Not: { Expression: { Comparison: { ComparisonKind: 0, Left: { Column: { Expression: { SourceRef: { Source: source } }, Property: property } }, Right: { Literal: { Value: 'null' } } } } } } });
+const pbiCompanyFilter = (source: string) => ({ Condition: { Contains: { Left: { Column: { Expression: { SourceRef: { Source: source } }, Property: 'company_name' } }, Right: { Literal: { Value: "'ONtact'" } } } } });
+const makePowerBiBody = (selects: unknown[], dateProperty: string, from: string, to: string, visualId: string) => ({ version: '1.0.0', queries: [{ Query: { Commands: [{ SemanticQueryDataShapeCommand: { Query: { Version: 2, From: [{ Name: 'b', Entity: 'blue_label_reporting wow_data', Type: 0 }], Select: selects, Where: [pbiDateRange('b', dateProperty, from, to), pbiNotNull('b', dateProperty), pbiCompanyFilter('b')] }, Binding: { Primary: { Groupings: [{ Projections: selects.map((_, index) => index) }] }, DataReduction: { DataVolume: 3, Primary: { Top: {} } }, Version: 1 }, ExecutionMetricsKind: 1 } }] }, QueryId: '', ApplicationContext: { DatasetId: POWERBI_DATASET_ID, Sources: [{ ReportId: POWERBI_REPORT_ID, VisualId: visualId }] } }], cancelQueries: [], modelId: POWERBI_MODEL_ID });
+const primitive = (value: unknown) => ['string', 'number', 'boolean'].includes(typeof value) || value === null;
+const extractPowerBiRows = (payload: unknown, columns: string[], queryName: string) => {
+  const rows: JsonRow[] = [];
+  const visit = (node: unknown) => {
+    if (!node || typeof node !== 'object') return;
+    if (!Array.isArray(node) && Array.isArray((node as Record<string, unknown>).C)) {
+      const values = (node as { C: unknown[] }).C;
+      if (values.length > 0 && values.length <= columns.length && values.every(primitive)) {
+        const row: JsonRow = { query: queryName, dataset_id: POWERBI_DATASET_ID, report_id: POWERBI_REPORT_ID, model_id: POWERBI_MODEL_ID };
+        columns.forEach((column, index) => { row[column] = values[index] ?? ''; });
+        rows.push(row);
+      }
+    }
+    Object.values(node as Record<string, unknown>).forEach((value) => { if (value && typeof value === 'object') visit(value); });
+  };
+  visit(payload);
+  const seen = new Set<string>();
+  return rows.filter((row) => { const key = JSON.stringify(row); if (seen.has(key)) return false; seen.add(key); return true; });
+};
+const fetchPowerBiQuery = async (env: Env, queryName: string, columns: string[], body: unknown) => {
+  const endpoint = env.POWERBI_QUERYDATA_URL || DEFAULT_POWERBI_QUERYDATA_URL;
+  const resourceKey = env.POWERBI_RESOURCE_KEY || DEFAULT_POWERBI_RESOURCE_KEY;
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { accept: 'application/json, text/plain, */*', 'content-type': 'application/json;charset=UTF-8', origin: 'https://app.powerbi.com', referer: 'https://app.powerbi.com/', 'x-powerbi-resourcekey': resourceKey },
+    body: JSON.stringify(body)
+  });
+  const text = await response.text();
+  let payload: unknown;
+  try { payload = JSON.parse(text); } catch { return { ok: false, status: response.status, rows: [] as JsonRow[], error: `Power BI ${queryName} did not return JSON`, preview: text.slice(0, 250) }; }
+  return { ok: response.ok, status: response.status, rows: extractPowerBiRows(payload, columns, queryName), error: response.ok ? undefined : `Power BI ${queryName} returned ${response.status}` };
+};
+
 const fetchPowerBi = async (env: Env, query: URLSearchParams) => {
   const filter = dateBoundsFromQuery(query);
+  const from = filter.from || '2024-01-01';
+  const to = filter.to || isoDate(new Date());
   const recordLimit = getRecordLimit(query);
-  if (!env.POWERBI_QUERYDATA_URL || !env.POWERBI_RESOURCE_KEY) return { source: 'powerbi', ok: false, configured: false, type: 'querydata', error: 'Missing Power BI QueryData URL or resource key.', filters: { ...filter, strategy: 'powerbi-query-level-date-filter' }, analytics: aggregateRows([], 'powerbi', recordLimit) };
-  return { source: 'powerbi', ok: false, configured: true, type: 'querydata', error: 'Power BI QueryData direct extraction requires configured query bodies. Onvest/Ontact API sync is unaffected.', filters: { ...filter, strategy: 'powerbi-query-level-date-filter' }, analytics: aggregateRows([], 'powerbi', recordLimit) };
+  const startedAt = new Date().toISOString();
+  const requests = [
+    { name: 'segment_activations', columns: ['segment', 'count_activation'], body: makePowerBiBody([pbiSelectColumn('b', 'segment', 'Segment'), pbiCount('b', 'activation', 'Count of activation')], 'activation', from, to, 'segment-activations') },
+    { name: 'team_activations', columns: ['team_name', 'count_activation'], body: makePowerBiBody([pbiSelectColumn('b', 'team_name', 'Team'), pbiCount('b', 'activation', 'Count of activation')], 'activation', from, to, 'team-activations') },
+    { name: 'agent_activations', columns: ['full_name', 'team_name', 'total_activations'], body: makePowerBiBody([pbiSelectColumn('b', 'full_name', 'Agent'), pbiSelectColumn('b', 'team_name', 'Team'), pbiCount('b', 'contract_key', 'Total Activations')], 'activation', from, to, 'agent-activations') },
+    { name: 'activation_dates', columns: ['activation', 'count_activation'], body: makePowerBiBody([pbiSelectColumn('b', 'activation', 'Activation'), pbiCount('b', 'activation', 'Count of activation')], 'activation', from, to, 'activation-dates') },
+    { name: 'segment_capture_complete', columns: ['segment', 'count_capture_complete'], body: makePowerBiBody([pbiSelectColumn('b', 'segment', 'Segment'), pbiCount('b', 'capture_complete', 'Count of capture_complete')], 'capture_complete', from, to, 'segment-capture-complete') },
+    { name: 'team_capture_complete', columns: ['team_name', 'count_capture_complete'], body: makePowerBiBody([pbiSelectColumn('b', 'team_name', 'Team'), pbiCount('b', 'capture_complete', 'Count of capture_complete')], 'capture_complete', from, to, 'team-capture-complete') },
+    { name: 'agent_capture_complete', columns: ['full_name', 'total_capture_complete'], body: makePowerBiBody([pbiSelectColumn('b', 'full_name', 'Agent'), pbiCount('b', 'contract_key', 'Total Capture Complete')], 'capture_complete', from, to, 'agent-capture-complete') },
+    { name: 'capture_complete_dates', columns: ['capture_complete', 'count_capture_complete'], body: makePowerBiBody([pbiSelectColumn('b', 'capture_complete', 'Capture Complete'), pbiCount('b', 'capture_complete', 'Count of capture_complete')], 'capture_complete', from, to, 'capture-complete-dates') },
+    { name: 'segment_nett_apps', columns: ['segment', 'count_nett_app'], body: makePowerBiBody([pbiSelectColumn('b', 'segment', 'Segment'), pbiCount('b', 'nett_app', 'Count of nett_app')], 'nett_app', from, to, 'segment-nett-apps') },
+    { name: 'team_nett_apps', columns: ['team_name', 'count_nett_app'], body: makePowerBiBody([pbiSelectColumn('b', 'team_name', 'Team'), pbiCount('b', 'nett_app', 'Count of nett_app')], 'nett_app', from, to, 'team-nett-apps') },
+    { name: 'agent_nett_apps', columns: ['full_name', 'team_name', 'total_nett_apps'], body: makePowerBiBody([pbiSelectColumn('b', 'full_name', 'Agent'), pbiSelectColumn('b', 'team_name', 'Team'), pbiCount('b', 'contract_key', 'Total Nett Apps')], 'nett_app', from, to, 'agent-nett-apps') },
+    { name: 'nett_app_dates', columns: ['nett_app', 'count_nett_app'], body: makePowerBiBody([pbiSelectColumn('b', 'nett_app', 'Nett App'), pbiCount('b', 'nett_app', 'Count of nett_app')], 'nett_app', from, to, 'nett-app-dates') },
+    { name: 'date_created_on_capture_complete', columns: ['date_created', 'count_date_created'], body: makePowerBiBody([pbiSelectColumn('b', 'date_created', 'Date Created'), pbiCount('b', 'date_created', 'Count of date_created')], 'capture_complete', from, to, 'date-created-capture-complete') }
+  ];
+  try {
+    const responses = await Promise.all(requests.map((request) => fetchPowerBiQuery(env, request.name, request.columns, request.body)));
+    const rawRows = responses.flatMap((response) => response.rows);
+    const rows = rawRows.slice(0, recordLimit);
+    const failures = responses.filter((response) => !response.ok);
+    return { source: 'powerbi', ok: failures.length === 0, configured: true, type: 'querydata', status: failures[0]?.status ?? 200, startedAt, completedAt: new Date().toISOString(), upstreamCount: rawRows.length, rawRows: rawRows.length, filteredRows: rawRows.length, excludedByDate: 0, undatedRowsExcluded: 0, rows: rows.length, recordLimit, defaultWindowApplied: filter.defaultWindowApplied, filters: { from, to, applied: true, defaultWindowApplied: filter.defaultWindowApplied, strategy: 'powerbi-querydata-date-filter-inside-request-body' }, usingDefaultQuerydataUrl: !env.POWERBI_QUERYDATA_URL, usingDefaultResourceKey: !env.POWERBI_RESOURCE_KEY, queryDataEndpoint: env.POWERBI_QUERYDATA_URL || DEFAULT_POWERBI_QUERYDATA_URL, reportTitle: 'Rubix Reports Power BI Production Data', reportId: POWERBI_REPORT_ID, datasetId: POWERBI_DATASET_ID, error: failures.length ? failures.map((failure) => failure.error).join(' | ') : undefined, analytics: aggregateRows(rows, 'powerbi', recordLimit) };
+  } catch (error) {
+    return { source: 'powerbi', ok: false, configured: true, type: 'querydata', error: error instanceof Error ? error.message : String(error), startedAt, completedAt: new Date().toISOString(), filters: { ...filter, strategy: 'powerbi-querydata-date-filter-inside-request-body' }, analytics: aggregateRows([], 'powerbi', recordLimit) };
+  }
 };
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
