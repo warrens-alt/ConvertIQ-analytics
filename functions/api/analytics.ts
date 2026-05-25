@@ -5,9 +5,11 @@ export interface Env {
   ONTACT_API_URL?: string;
   ONTACT_API_USERNAME?: string;
   ONTACT_API_PASSWORD?: string;
+  POWERBI_EMBED_URL?: string;
 }
 
-type SourceName = 'onvest' | 'ontact';
+type ApiSourceName = 'onvest' | 'ontact';
+type SourceName = ApiSourceName | 'powerbi';
 type JsonRow = Record<string, unknown>;
 
 type FieldProfile = {
@@ -22,7 +24,9 @@ type FieldProfile = {
   sampleValues: string[];
 };
 
-const SOURCE_CONFIG: Record<SourceName, { url: keyof Env; username: keyof Env; password: keyof Env }> = {
+const DEFAULT_POWERBI_EMBED_URL = 'https://app.powerbi.com/view?r=eyJrIjoiNGQ3YTg1YWEtYzU0NS00ZDQ1LWIzYTYtNzE5YzNjODA1YWY3IiwidCI6ImZhNGJhZWJlLWMyYTEtNDY0Zi1hZDY0LWNiM2VkODY2YjY4MiJ9';
+
+const SOURCE_CONFIG: Record<ApiSourceName, { url: keyof Env; username: keyof Env; password: keyof Env }> = {
   onvest: { url: 'ONVEST_API_URL', username: 'ONVEST_API_USERNAME', password: 'ONVEST_API_PASSWORD' },
   ontact: { url: 'ONTACT_API_URL', username: 'ONTACT_API_USERNAME', password: 'ONTACT_API_PASSWORD' }
 };
@@ -98,7 +102,7 @@ const statusFamily = (status: unknown): string => {
   return value;
 };
 
-const fieldGroup = (field: string, source: SourceName) => {
+const fieldGroup = (field: string, source: ApiSourceName) => {
   if (PII_FIELDS.has(field)) return 'PII / redacted';
   if (['date', 'call_date', 'entry_date', 'modify_date', 'last_local_call_time'].includes(field)) return 'Date / time';
   if (source === 'ontact') {
@@ -120,7 +124,7 @@ const fieldGroup = (field: string, source: SourceName) => {
   return 'Lead funnel';
 };
 
-const fieldRole = (field: string, source: SourceName) => {
+const fieldRole = (field: string, source: ApiSourceName) => {
   if (PII_FIELDS.has(field)) return 'redacted identifier';
   if (field === 'date' || field.includes('_date') || field.endsWith('_time')) return 'date/time';
   if (source === 'ontact' && ['uniqueid', 'lead_id', 'list_id', 'campaign_id', 'source_id', 'entry_list_id'].includes(field)) return 'identifier';
@@ -185,7 +189,7 @@ const incrementBucket = (map: Map<string, Record<string, number | string>>, keyN
   return bucket;
 };
 
-const buildFieldCatalog = (rows: JsonRow[], source: SourceName) => {
+const buildFieldCatalog = (rows: JsonRow[], source: ApiSourceName) => {
   const order: string[] = [];
   const profiles = new Map<string, FieldProfile>();
   const ensure = (field: string) => {
@@ -236,7 +240,7 @@ const sanitizeRecords = (rows: JsonRow[], fields: string[], limit: number) =>
     return record;
   });
 
-const aggregateRows = (rows: JsonRow[], source: SourceName, recordLimit: number) => {
+const aggregateRows = (rows: JsonRow[], source: ApiSourceName, recordLimit: number) => {
   const fieldCatalog = buildFieldCatalog(rows, source);
   const columns = fieldCatalog.map((field) => field.field);
   const numericKeys = new Set<string>();
@@ -307,7 +311,41 @@ const aggregateRows = (rows: JsonRow[], source: SourceName, recordLimit: number)
   };
 };
 
-const fetchSource = async (source: SourceName, env: Env, query: URLSearchParams) => {
+const emptyAnalytics = (fieldCatalog: FieldProfile[] = []) => ({
+  fields: { numeric: [], text: fieldCatalog.map((field) => field.field) },
+  fieldCatalog,
+  columns: fieldCatalog.map((field) => field.field),
+  totals: { records: 0 },
+  derived: {},
+  byDate: [],
+  byVendor: [],
+  byAgent: [],
+  byStatus: [],
+  records: [],
+  recordsReturned: 0,
+  recordLimit: 0
+});
+
+const fetchPowerBi = (env: Env) => {
+  const embedUrl = env.POWERBI_EMBED_URL || DEFAULT_POWERBI_EMBED_URL;
+  return {
+    source: 'powerbi',
+    ok: true,
+    configured: true,
+    type: 'embed',
+    rows: 0,
+    upstreamCount: 0,
+    embedUrl,
+    reportTitle: 'Rubix Reports Power BI Production Report',
+    analytics: emptyAnalytics([
+      { field: 'powerbi_embed_url', group: 'Power BI', role: 'iframe embed source', type: 'url', numeric: false, pii: false, nonNull: 1, sampleValues: [embedUrl] },
+      { field: 'report_host', group: 'Power BI', role: 'external report host', type: 'string', numeric: false, pii: false, nonNull: 1, sampleValues: ['app.powerbi.com'] },
+      { field: 'source_capture', group: 'Power BI', role: 'uploaded browser capture reference', type: 'string', numeric: false, pii: false, nonNull: 1, sampleValues: ['Rubix Reports iframe / public Power BI view'] }
+    ])
+  };
+};
+
+const fetchSource = async (source: ApiSourceName, env: Env, query: URLSearchParams) => {
   const config = SOURCE_CONFIG[source];
   const base = env[config.url];
   const username = env[config.username];
@@ -370,11 +408,11 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       ok: false,
       mode: 'resource-safe-live-api-sync-no-database',
       generatedAt: new Date().toISOString(),
-      results: [{ source: 'all', ok: false, configured: true, error: 'Combined live sync is disabled in Pages Function mode to avoid Cloudflare 1102 CPU limits. Request source=onvest or source=ontact separately.' }]
+      results: [{ source: 'all', ok: false, configured: true, error: 'Combined live sync is disabled in Pages Function mode to avoid Cloudflare 1102 CPU limits. Request source=onvest, source=ontact or source=powerbi separately.' }]
     }, { status: 400 });
   }
 
-  const source: SourceName = sourceParam === 'ontact' ? 'ontact' : 'onvest';
-  const result = await fetchSource(source, env, url.searchParams);
+  const source: SourceName = sourceParam === 'ontact' ? 'ontact' : sourceParam === 'powerbi' ? 'powerbi' : 'onvest';
+  const result = source === 'powerbi' ? fetchPowerBi(env) : await fetchSource(source, env, url.searchParams);
   return json({ ok: result.ok, mode: 'resource-safe-live-api-sync-no-database', generatedAt: new Date().toISOString(), results: [result] });
 };
