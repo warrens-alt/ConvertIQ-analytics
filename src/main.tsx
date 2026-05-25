@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BarChart3, DatabaseZap, RefreshCw, ShieldCheck, SlidersHorizontal, Table2, Search, Columns3, Gauge, UsersRound } from 'lucide-react';
+import { BarChart3, DatabaseZap, RefreshCw, ShieldCheck, SlidersHorizontal, Search, Gauge, UsersRound, MonitorUp } from 'lucide-react';
 import {
   Area,
   AreaChart,
@@ -20,8 +20,8 @@ import {
 } from 'recharts';
 import './styles.css';
 
-type ApiSource = 'onvest' | 'ontact';
-type Tab = 'overview' | 'parameters' | 'rows' | 'funnel' | 'vendors' | 'operations';
+type ApiSource = 'onvest' | 'ontact' | 'powerbi';
+type Tab = 'overview' | 'parameters' | 'rows' | 'funnel' | 'vendors' | 'operations' | 'powerbi';
 
 type FieldProfile = {
   field: string;
@@ -40,6 +40,7 @@ type AnalyticsResult = {
   ok: boolean;
   configured: boolean;
   status?: number;
+  type?: string;
   rows?: number;
   upstreamCount?: number;
   truncated?: boolean;
@@ -47,6 +48,8 @@ type AnalyticsResult = {
   recordLimit?: number;
   defaultWindowApplied?: boolean;
   error?: string;
+  embedUrl?: string;
+  reportTitle?: string;
   analytics?: {
     fields: { numeric: string[]; text: string[] };
     fieldCatalog: FieldProfile[];
@@ -97,20 +100,20 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const load = async () => {
+  const load = async (nextSource = source) => {
     setLoading(true); setError('');
     try {
       const params = new URLSearchParams();
-      params.set('source', source);
+      params.set('source', nextSource);
       params.set('maxRows', maxRows);
       params.set('recordLimit', recordLimit);
-      if (from) params.set('from', from);
-      if (to) params.set('to', to);
+      if (from && nextSource !== 'powerbi') params.set('from', from);
+      if (to && nextSource !== 'powerbi') params.set('to', to);
       const res = await fetch(`/api/analytics?${params}`);
       const data: unknown = await res.json();
       if (!isPayload(data)) throw new Error('The API route returned an unexpected payload shape.');
       setPayload(data);
-      if (!data.ok) setError(data.results[0]?.error || 'The selected API source needs attention.');
+      if (!data.ok) setError(data.results[0]?.error || 'The selected source needs attention.');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -126,6 +129,7 @@ function App() {
   const fields = analytics?.fieldCatalog ?? [];
   const records = analytics?.records ?? [];
   const columns = analytics?.columns ?? [];
+  const isPowerBi = source === 'powerbi';
 
   const groups = useMemo(() => ['all', ...Array.from(new Set(fields.map((field) => field.group))).sort()], [fields]);
   const filteredFields = useMemo(() => {
@@ -148,8 +152,14 @@ function App() {
     { id: 'rows', label: 'All Rows' },
     { id: 'funnel', label: 'Journey Funnel' },
     { id: 'vendors', label: 'Vendors' },
-    { id: 'operations', label: 'Operations' }
+    { id: 'operations', label: 'Operations' },
+    { id: 'powerbi', label: 'Power BI' }
   ];
+
+  const sourceTitle = source === 'onvest' ? 'Onvest Dashboard API' : source === 'ontact' ? 'Ontact Analytics API' : 'Power BI Embedded Report';
+  const sourceCopy = isPowerBi
+    ? 'Embedded Power BI report from the Rubix Reports production capture. Use this as the visual reference layer alongside the live Onvest and Ontact API explorers.'
+    : 'Every API parameter is profiled, grouped, totalled where numeric, and shown in the row explorer. Sensitive lead fields are redacted but still listed in the parameter registry.';
 
   const funnel = [
     { name: 'Fetched', value: n(derived.fetchedLeads) },
@@ -168,38 +178,35 @@ function App() {
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark">CIQ</div><div><b>ConvertIQ</b><span>Analytics command center</span></div></div>
       <nav>{tabs.map((t) => <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}>{t.label}</button>)}</nav>
-      <div className="sync-panel"><ShieldCheck size={18}/><b>Full parameter mode</b><span>Lists every field detected in the selected API payload and shows sanitised row-level records.</span></div>
+      <div className="sync-panel"><ShieldCheck size={18}/><b>Onvest · Ontact · Power BI</b><span>Live API explorer plus embedded Power BI reference layer.</span></div>
     </aside>
 
     <section className="workspace">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Live API analytics · full parameter registry</p>
-          <h1>{source === 'onvest' ? 'Onvest Dashboard API' : 'Ontact Analytics API'}</h1>
-          <p className="subcopy">Every API parameter is profiled, grouped, totalled where numeric, and shown in the row explorer. Sensitive lead fields are redacted but still listed in the parameter registry.</p>
+          <p className="eyebrow">Live analytics · source registry</p>
+          <h1>{sourceTitle}</h1>
+          <p className="subcopy">{sourceCopy}</p>
         </div>
-        <button className="primary" onClick={load} disabled={loading}><RefreshCw size={16} className={loading ? 'spin' : ''}/> {loading ? 'Syncing' : 'Sync API'}</button>
+        <button className="primary" onClick={() => load()} disabled={loading}><RefreshCw size={16} className={loading ? 'spin' : ''}/> {loading ? 'Syncing' : isPowerBi ? 'Load report' : 'Sync API'}</button>
       </header>
 
       <section className="controls card">
         <SlidersHorizontal size={18}/>
-        <select value={source} onChange={(e) => setSource(e.target.value as ApiSource)}><option value="onvest">Onvest Dashboard API</option><option value="ontact">Ontact Analytics API</option></select>
-        <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}/>
-        <input type="date" value={to} onChange={(e) => setTo(e.target.value)}/>
-        <select value={maxRows} onChange={(e) => setMaxRows(e.target.value)}><option value="1000">Process 1,000 rows</option><option value="5000">Process 5,000 rows</option><option value="10000">Process 10,000 rows</option><option value="15000">Process 15,000 rows</option></select>
-        <select value={recordLimit} onChange={(e) => setRecordLimit(e.target.value)}><option value="250">Show 250 rows</option><option value="1000">Show 1,000 rows</option><option value="2500">Show 2,500 rows</option><option value="5000">Show 5,000 rows</option></select>
-        <button onClick={load}>Apply</button>
+        <select value={source} onChange={(e) => { const next = e.target.value as ApiSource; setSource(next); if (next === 'powerbi') setTab('powerbi'); load(next); }}><option value="onvest">Onvest Dashboard API</option><option value="ontact">Ontact Analytics API</option><option value="powerbi">Power BI Report</option></select>
+        {!isPowerBi && <><input type="date" value={from} onChange={(e) => setFrom(e.target.value)}/><input type="date" value={to} onChange={(e) => setTo(e.target.value)}/><select value={maxRows} onChange={(e) => setMaxRows(e.target.value)}><option value="1000">Process 1,000 rows</option><option value="5000">Process 5,000 rows</option><option value="10000">Process 10,000 rows</option><option value="15000">Process 15,000 rows</option></select><select value={recordLimit} onChange={(e) => setRecordLimit(e.target.value)}><option value="250">Show 250 rows</option><option value="1000">Show 1,000 rows</option><option value="2500">Show 2,500 rows</option><option value="5000">Show 5,000 rows</option></select></>}
+        <button onClick={() => load()}>{isPowerBi ? 'Reload' : 'Apply'}</button>
         <span>{payload ? `Last sync: ${new Date(payload.generatedAt).toLocaleString()}` : 'Not synced yet'}</span>
       </section>
 
       {error && <section className="notice">{error}</section>}
-      {result?.defaultWindowApplied && <section className="notice soft">No date range was selected, so the request used a safe recent window. Select dates to inspect a specific period.</section>}
+      {result?.defaultWindowApplied && !isPowerBi && <section className="notice soft">No date range was selected, so the request used a safe recent window. Select dates to inspect a specific period.</section>}
       {result?.truncated && <section className="notice soft">Large response protected: processed {number.format(result.rows ?? 0)} of {number.format(result.upstreamCount ?? 0)} upstream rows.</section>}
 
       <section className="source-grid">
-        <section className="card source-card"><span className={result?.ok ? 'pill ok' : 'pill warn'}>{result?.ok ? 'Connected' : 'Attention'}</span><h3>{source.toUpperCase()}</h3><p>{result?.ok ? `${number.format(result.rows ?? 0)} rows processed · ${number.format(result.upstreamCount ?? result.rows ?? 0)} upstream rows` : result?.error || 'Waiting for sync'}</p></section>
+        <section className="card source-card"><span className={result?.ok ? 'pill ok' : 'pill warn'}>{result?.ok ? 'Connected' : 'Attention'}</span><h3>{source.toUpperCase()}</h3><p>{isPowerBi ? 'Embedded public Power BI view loaded from configuration.' : result?.ok ? `${number.format(result.rows ?? 0)} rows processed · ${number.format(result.upstreamCount ?? result.rows ?? 0)} upstream rows` : result?.error || 'Waiting for sync'}</p></section>
         <section className="card source-card"><span className="pill ok">Parameters</span><h3>{number.format(fields.length)}</h3><p>{number.format(fields.filter((f) => f.numeric).length)} numeric · {number.format(fields.filter((f) => f.pii).length)} redacted sensitive fields</p></section>
-        <section className="card source-card"><span className="pill ok">Rows</span><h3>{number.format(records.length)}</h3><p>Sanitised records returned for table inspection.</p></section>
+        <section className="card source-card"><span className="pill ok">Rows</span><h3>{number.format(records.length)}</h3><p>{isPowerBi ? 'Power BI is visual embed only.' : 'Sanitised records returned for table inspection.'}</p></section>
       </section>
 
       {tab === 'overview' && <>
@@ -238,6 +245,11 @@ function App() {
       {tab === 'operations' && <section className="grid two">
         <ChartCard title="Agent productivity"><ResponsiveContainer width="100%" height={420}><BarChart data={analytics?.byAgent ?? []}><CartesianGrid vertical={false}/><XAxis dataKey="agent"/><YAxis/><Tooltip/><Bar dataKey="records" name="Records / Calls"/><Bar dataKey="length_in_sec" name="Talk seconds"/></BarChart></ResponsiveContainer></ChartCard>
         <DataTable rows={analytics?.byStatus ?? []} title="Status / outcome breakdown"/>
+      </section>}
+
+      {tab === 'powerbi' && <section className="card powerbi-card wide">
+        <div className="section-head"><div><h2>{result?.reportTitle || 'Power BI Report'}</h2><p>Embedded visual reference report from the attached Rubix Reports / Power BI capture.</p></div><MonitorUp size={24}/></div>
+        {result?.embedUrl ? <iframe title="Power BI report" src={result.embedUrl} allowFullScreen /> : <div className="notice">No Power BI embed URL configured.</div>}
       </section>}
     </section>
   </main>;
