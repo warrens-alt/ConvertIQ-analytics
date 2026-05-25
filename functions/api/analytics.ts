@@ -5,7 +5,8 @@ export interface Env {
   ONTACT_API_URL?: string;
   ONTACT_API_USERNAME?: string;
   ONTACT_API_PASSWORD?: string;
-  POWERBI_EMBED_URL?: string;
+  POWERBI_QUERYDATA_URL?: string;
+  POWERBI_RESOURCE_KEY?: string;
 }
 
 type ApiSourceName = 'onvest' | 'ontact';
@@ -24,7 +25,11 @@ type FieldProfile = {
   sampleValues: string[];
 };
 
-const DEFAULT_POWERBI_EMBED_URL = 'https://app.powerbi.com/view?r=eyJrIjoiNGQ3YTg1YWEtYzU0NS00ZDQ1LWIzYTYtNzE5YzNjODA1YWY3IiwidCI6ImZhNGJhZWJlLWMyYTEtNDY0Zi1hZDY0LWNiM2VkODY2YjY4MiJ9';
+const DEFAULT_POWERBI_QUERYDATA_URL = 'https://wabi-south-africa-north-a-primary-api.analysis.windows.net/public/reports/querydata?synchronous=true';
+const DEFAULT_POWERBI_RESOURCE_KEY = '4d7a85aa-c545-4d45-b3a6-719c3c805af7';
+const POWERBI_DATASET_ID = '59cef14d-8dd0-4016-a349-c227162a0fee';
+const POWERBI_REPORT_ID = 'fe973424-23fd-433a-a81f-0f08416228ef';
+const POWERBI_MODEL_ID = 598641;
 
 const SOURCE_CONFIG: Record<ApiSourceName, { url: keyof Env; username: keyof Env; password: keyof Env }> = {
   onvest: { url: 'ONVEST_API_URL', username: 'ONVEST_API_USERNAME', password: 'ONVEST_API_PASSWORD' },
@@ -82,8 +87,9 @@ const getValueType = (value: unknown) => {
 };
 
 const classifyVendor = (row: JsonRow): string => {
-  const source = String(row.offershop_source ?? row.owner ?? row.campaign_id ?? row.list_id ?? '').toLowerCase();
+  const source = String(row.offershop_source ?? row.owner ?? row.campaign_id ?? row.list_id ?? row.company_name ?? row.query ?? '').toLowerCase();
   const comments = String(row.comments ?? '').toLowerCase();
+  if (source.includes('power bi')) return 'Power BI';
   if (source.includes('mondo') || comments.includes('mondo')) return 'Mondo';
   if (source.includes('mtn') || comments.includes('mtn')) return 'MTN';
   if (source.includes('blc') || comments.includes('vodacom') || comments.includes('segment ->')) return 'BLC';
@@ -102,8 +108,15 @@ const statusFamily = (status: unknown): string => {
   return value;
 };
 
-const fieldGroup = (field: string, source: ApiSourceName) => {
+const fieldGroup = (field: string, source: SourceName) => {
   if (PII_FIELDS.has(field)) return 'PII / redacted';
+  if (source === 'powerbi') {
+    if (['query', 'dataset_id', 'report_id', 'model_id'].includes(field)) return 'Power BI query context';
+    if (['segment', 'team_name', 'full_name', 'company_name'].includes(field)) return 'Power BI dimensions';
+    if (['activation', 'capture_complete', 'nett_app', 'date_created'].includes(field)) return 'Power BI date fields';
+    if (field.startsWith('count_') || field.startsWith('total_')) return 'Power BI measures';
+    return 'Power BI data model';
+  }
   if (['date', 'call_date', 'entry_date', 'modify_date', 'last_local_call_time'].includes(field)) return 'Date / time';
   if (source === 'ontact') {
     if (['uniqueid', 'lead_id', 'list_id', 'campaign_id', 'source_id', 'entry_list_id'].includes(field)) return 'Ontact identifiers';
@@ -124,9 +137,14 @@ const fieldGroup = (field: string, source: ApiSourceName) => {
   return 'Lead funnel';
 };
 
-const fieldRole = (field: string, source: ApiSourceName) => {
+const fieldRole = (field: string, source: SourceName) => {
   if (PII_FIELDS.has(field)) return 'redacted identifier';
   if (field === 'date' || field.includes('_date') || field.endsWith('_time')) return 'date/time';
+  if (source === 'powerbi') {
+    if (field.startsWith('count_') || field.startsWith('total_')) return 'measure';
+    if (['query', 'dataset_id', 'report_id', 'model_id'].includes(field)) return 'metadata';
+    return 'dimension';
+  }
   if (source === 'ontact' && ['uniqueid', 'lead_id', 'list_id', 'campaign_id', 'source_id', 'entry_list_id'].includes(field)) return 'identifier';
   if (['offershop_source', 'campaign_id', 'status', 'call_result', 'agent', 'user', 'owner'].includes(field)) return 'dimension';
   return 'metric';
@@ -189,7 +207,7 @@ const incrementBucket = (map: Map<string, Record<string, number | string>>, keyN
   return bucket;
 };
 
-const buildFieldCatalog = (rows: JsonRow[], source: ApiSourceName) => {
+const buildFieldCatalog = (rows: JsonRow[], source: SourceName) => {
   const order: string[] = [];
   const profiles = new Map<string, FieldProfile>();
   const ensure = (field: string) => {
@@ -240,7 +258,7 @@ const sanitizeRecords = (rows: JsonRow[], fields: string[], limit: number) =>
     return record;
   });
 
-const aggregateRows = (rows: JsonRow[], source: ApiSourceName, recordLimit: number) => {
+const aggregateRows = (rows: JsonRow[], source: SourceName, recordLimit: number) => {
   const fieldCatalog = buildFieldCatalog(rows, source);
   const columns = fieldCatalog.map((field) => field.field);
   const numericKeys = new Set<string>();
@@ -252,10 +270,10 @@ const aggregateRows = (rows: JsonRow[], source: ApiSourceName, recordLimit: numb
   const byStatus = new Map<string, Record<string, number | string>>();
 
   for (const row of rows) {
-    const date = toDate(row.date ?? row.call_date ?? row.entry_date ?? row.modify_date) ?? 'Undated';
+    const date = toDate(row.date ?? row.call_date ?? row.entry_date ?? row.modify_date ?? row.activation ?? row.capture_complete ?? row.date_created) ?? 'Undated';
     const vendor = classifyVendor(row);
-    const agent = String(row.agent ?? row.user ?? 'Unassigned');
-    const status = statusFamily(row.status ?? row.call_result);
+    const agent = String(row.agent ?? row.user ?? row.full_name ?? 'Unassigned');
+    const status = statusFamily(row.status ?? row.call_result ?? row.query);
     const dateBucket = incrementBucket(byDate, 'date', date);
     const vendorBucket = incrementBucket(byVendor, 'vendor', vendor);
     const agentBucket = incrementBucket(byAgent, 'agent', agent);
@@ -286,7 +304,9 @@ const aggregateRows = (rows: JsonRow[], source: ApiSourceName, recordLimit: numb
     acceptedLeads: totals.Accepted_Leads ?? totals.Total_Leads_Delivered_OnTact ?? 0,
     qualifiedLeads: totals.Qualified_Leads ?? 0,
     sales: (totals.MTN_Sales ?? 0) + (totals.Total_Leads_Sold_A ?? 0) + (totals.Total_Leads_Sold_B ?? 0) + (totals.Total_Leads_Sold_C ?? 0) + (totals.Total_Leads_Sold_D ?? 0),
-    activations: totals.MTN_Activated_Sales ?? 0,
+    activations: (totals.MTN_Activated_Sales ?? 0) + (totals.count_activation ?? 0) + (totals.total_activations ?? 0),
+    captureComplete: totals.total_capture_complete ?? totals.count_capture_complete ?? 0,
+    nettApps: totals.count_nett_app ?? totals.total_nett_apps ?? 0,
     calls: rows.filter((r) => r.call_date || r.uniqueid).length,
     talkSeconds: totals.length_in_sec ?? 0,
     answerRate: totals.MTN_Dialed_Leads ? (totals.MTN_Answered_Calls ?? 0) / totals.MTN_Dialed_Leads : 0,
@@ -311,38 +331,168 @@ const aggregateRows = (rows: JsonRow[], source: ApiSourceName, recordLimit: numb
   };
 };
 
-const emptyAnalytics = (fieldCatalog: FieldProfile[] = []) => ({
-  fields: { numeric: [], text: fieldCatalog.map((field) => field.field) },
-  fieldCatalog,
-  columns: fieldCatalog.map((field) => field.field),
-  totals: { records: 0 },
-  derived: {},
-  byDate: [],
-  byVendor: [],
-  byAgent: [],
-  byStatus: [],
-  records: [],
-  recordsReturned: 0,
-  recordLimit: 0
+const pbiSelectColumn = (source: string, property: string, label: string) => ({
+  Column: { Expression: { SourceRef: { Source: source } }, Property: property },
+  Name: `blue_label_reporting wow_data.${property}`,
+  NativeReferenceName: label
 });
 
-const fetchPowerBi = (env: Env) => {
-  const embedUrl = env.POWERBI_EMBED_URL || DEFAULT_POWERBI_EMBED_URL;
-  return {
-    source: 'powerbi',
-    ok: true,
-    configured: true,
-    type: 'embed',
-    rows: 0,
-    upstreamCount: 0,
-    embedUrl,
-    reportTitle: 'Rubix Reports Power BI Production Report',
-    analytics: emptyAnalytics([
-      { field: 'powerbi_embed_url', group: 'Power BI', role: 'iframe embed source', type: 'url', numeric: false, pii: false, nonNull: 1, sampleValues: [embedUrl] },
-      { field: 'report_host', group: 'Power BI', role: 'external report host', type: 'string', numeric: false, pii: false, nonNull: 1, sampleValues: ['app.powerbi.com'] },
-      { field: 'source_capture', group: 'Power BI', role: 'uploaded browser capture reference', type: 'string', numeric: false, pii: false, nonNull: 1, sampleValues: ['Rubix Reports iframe / public Power BI view'] }
-    ])
+const pbiCount = (source: string, property: string, label: string) => ({
+  Aggregation: { Expression: { Column: { Expression: { SourceRef: { Source: source } }, Property: property } }, Function: 5 },
+  Name: `CountNonNull(blue_label_reporting wow_data.${property})`,
+  NativeReferenceName: label
+});
+
+const pbiDateRange = (source: string, property: string, from: string, to: string) => ({
+  Condition: {
+    And: {
+      Left: { Comparison: { ComparisonKind: 2, Left: { Column: { Expression: { SourceRef: { Source: source } }, Property: property } }, Right: { Literal: { Value: `datetime'${from}T00:00:00'` } } } },
+      Right: { Comparison: { ComparisonKind: 3, Left: { Column: { Expression: { SourceRef: { Source: source } }, Property: property } }, Right: { Literal: { Value: `datetime'${to}T00:00:00'` } } } }
+    }
+  }
+});
+
+const pbiNotNull = (source: string, property: string) => ({
+  Condition: { Not: { Expression: { Comparison: { ComparisonKind: 0, Left: { Column: { Expression: { SourceRef: { Source: source } }, Property: property } }, Right: { Literal: { Value: 'null' } } } } } }
+});
+
+const pbiCompanyFilter = (source: string) => ({
+  Condition: { Contains: { Left: { Column: { Expression: { SourceRef: { Source: source } }, Property: 'company_name' } }, Right: { Literal: { Value: "'ONtact'" } } } }
+});
+
+const makePowerBiBody = (selects: unknown[], dateProperty: string, from: string, to: string, visualId: string) => ({
+  version: '1.0.0',
+  queries: [{
+    Query: {
+      Commands: [{
+        SemanticQueryDataShapeCommand: {
+          Query: {
+            Version: 2,
+            From: [{ Name: 'b', Entity: 'blue_label_reporting wow_data', Type: 0 }],
+            Select: selects,
+            Where: [pbiDateRange('b', dateProperty, from, to), pbiNotNull('b', dateProperty), pbiCompanyFilter('b')]
+          },
+          Binding: { Primary: { Groupings: [{ Projections: selects.map((_, index) => index) }] }, DataReduction: { DataVolume: 3, Primary: { Top: {} } }, Version: 1 },
+          ExecutionMetricsKind: 1
+        }
+      }]
+    },
+    QueryId: '',
+    ApplicationContext: { DatasetId: POWERBI_DATASET_ID, Sources: [{ ReportId: POWERBI_REPORT_ID, VisualId: visualId }] }
+  }],
+  cancelQueries: [],
+  modelId: POWERBI_MODEL_ID
+});
+
+const primitive = (value: unknown) => ['string', 'number', 'boolean'].includes(typeof value) || value === null;
+
+const extractPowerBiRows = (payload: unknown, columns: string[], queryName: string) => {
+  const rows: JsonRow[] = [];
+  const visit = (node: unknown) => {
+    if (!node || typeof node !== 'object') return;
+    if (!Array.isArray(node) && Array.isArray((node as Record<string, unknown>).C)) {
+      const values = (node as { C: unknown[] }).C;
+      if (values.length > 0 && values.length <= columns.length && values.every(primitive)) {
+        const row: JsonRow = { query: queryName, dataset_id: POWERBI_DATASET_ID, report_id: POWERBI_REPORT_ID, model_id: POWERBI_MODEL_ID };
+        columns.forEach((column, index) => { row[column] = values[index] ?? ''; });
+        rows.push(row);
+      }
+    }
+    for (const value of Object.values(node as Record<string, unknown>)) {
+      if (value && typeof value === 'object') visit(value);
+    }
   };
+  visit(payload);
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    const key = JSON.stringify(row);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const fetchPowerBiQuery = async (env: Env, queryName: string, columns: string[], body: unknown) => {
+  const endpoint = env.POWERBI_QUERYDATA_URL || DEFAULT_POWERBI_QUERYDATA_URL;
+  const resourceKey = env.POWERBI_RESOURCE_KEY || DEFAULT_POWERBI_RESOURCE_KEY;
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json, text/plain, */*',
+      'content-type': 'application/json;charset=UTF-8',
+      origin: 'https://app.powerbi.com',
+      referer: 'https://app.powerbi.com/',
+      'x-powerbi-resourcekey': resourceKey
+    },
+    body: JSON.stringify(body)
+  });
+  const text = await response.text();
+  let payload: unknown;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    return { ok: false, status: response.status, rows: [] as JsonRow[], error: `Power BI ${queryName} did not return JSON`, preview: text.slice(0, 250) };
+  }
+  const rows = extractPowerBiRows(payload, columns, queryName);
+  return { ok: response.ok, status: response.status, rows, error: response.ok ? undefined : `Power BI ${queryName} returned ${response.status}` };
+};
+
+const fetchPowerBi = async (env: Env, query: URLSearchParams) => {
+  const from = query.get('from') || query.get('date_from') || '2024-01-01';
+  const to = query.get('to') || query.get('date_to') || isoDate(new Date());
+  const recordLimit = getRecordLimit(query);
+  const startedAt = new Date().toISOString();
+  const requests = [
+    {
+      name: 'segment_activations',
+      columns: ['segment', 'count_activation'],
+      body: makePowerBiBody([pbiSelectColumn('b', 'segment', 'Segment'), pbiCount('b', 'activation', 'Count of activation')], 'activation', from, to, 'segment-activations')
+    },
+    {
+      name: 'team_activations',
+      columns: ['team_name', 'count_activation'],
+      body: makePowerBiBody([pbiSelectColumn('b', 'team_name', 'Team'), pbiCount('b', 'activation', 'Count of activation')], 'activation', from, to, 'team-activations')
+    },
+    {
+      name: 'agent_activations',
+      columns: ['full_name', 'team_name', 'total_activations'],
+      body: makePowerBiBody([pbiSelectColumn('b', 'full_name', 'Agent'), pbiSelectColumn('b', 'team_name', 'Team'), pbiCount('b', 'contract_key', 'Total Activations')], 'activation', from, to, 'agent-activations')
+    },
+    {
+      name: 'agent_capture_complete',
+      columns: ['full_name', 'total_capture_complete'],
+      body: makePowerBiBody([pbiSelectColumn('b', 'full_name', 'Agent'), pbiCount('b', 'contract_key', 'Total Capture Complete')], 'capture_complete', from, to, 'agent-capture-complete')
+    },
+    {
+      name: 'team_nett_apps',
+      columns: ['team_name', 'count_nett_app'],
+      body: makePowerBiBody([pbiSelectColumn('b', 'team_name', 'Team'), pbiCount('b', 'nett_app', 'Count of nett_app')], 'nett_app', from, to, 'team-nett-apps')
+    }
+  ];
+
+  try {
+    const responses = await Promise.all(requests.map((request) => fetchPowerBiQuery(env, request.name, request.columns, request.body)));
+    const rows = responses.flatMap((response) => response.rows).slice(0, recordLimit);
+    const failures = responses.filter((response) => !response.ok);
+    return {
+      source: 'powerbi',
+      ok: failures.length === 0,
+      configured: true,
+      type: 'querydata',
+      status: failures[0]?.status ?? 200,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      upstreamCount: rows.length,
+      rows: rows.length,
+      recordLimit,
+      queryDataEndpoint: env.POWERBI_QUERYDATA_URL || DEFAULT_POWERBI_QUERYDATA_URL,
+      reportTitle: 'Rubix Reports Power BI Production Data',
+      error: failures.length ? failures.map((failure) => failure.error).join(' | ') : undefined,
+      analytics: aggregateRows(rows, 'powerbi', recordLimit)
+    };
+  } catch (error) {
+    return { source: 'powerbi', ok: false, configured: true, type: 'querydata', error: error instanceof Error ? error.message : String(error), analytics: aggregateRows([], 'powerbi', recordLimit) };
+  }
 };
 
 const fetchSource = async (source: ApiSourceName, env: Env, query: URLSearchParams) => {
@@ -408,11 +558,11 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       ok: false,
       mode: 'resource-safe-live-api-sync-no-database',
       generatedAt: new Date().toISOString(),
-      results: [{ source: 'all', ok: false, configured: true, error: 'Combined live sync is disabled in Pages Function mode to avoid Cloudflare 1102 CPU limits. Request source=onvest, source=ontact or source=powerbi separately.' }]
+      results: [{ source: 'all', ok: false, configured: true, error: 'Combined server-side live sync is disabled in Pages Function mode to avoid Cloudflare 1102 CPU limits. Request source=onvest, source=ontact or source=powerbi separately. The frontend unifies these client-side.' }]
     }, { status: 400 });
   }
 
   const source: SourceName = sourceParam === 'ontact' ? 'ontact' : sourceParam === 'powerbi' ? 'powerbi' : 'onvest';
-  const result = source === 'powerbi' ? fetchPowerBi(env) : await fetchSource(source, env, url.searchParams);
+  const result = source === 'powerbi' ? await fetchPowerBi(env, url.searchParams) : await fetchSource(source, env, url.searchParams);
   return json({ ok: result.ok, mode: 'resource-safe-live-api-sync-no-database', generatedAt: new Date().toISOString(), results: [result] });
 };
