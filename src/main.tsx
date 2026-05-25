@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, BarChart3, CheckCircle2, DatabaseZap, Gauge, LineChart, RefreshCw, ShieldCheck, SlidersHorizontal, UsersRound } from 'lucide-react';
+import { Activity, BarChart3, CheckCircle2, DatabaseZap, Gauge, RefreshCw, ShieldCheck, SlidersHorizontal, UsersRound } from 'lucide-react';
 import {
   Area,
   AreaChart,
@@ -22,7 +22,7 @@ import {
 } from 'recharts';
 import './styles.css';
 
-type ApiSource = 'all' | 'onvest' | 'ontact';
+type ApiSource = 'onvest' | 'ontact';
 type Tab = 'executive' | 'funnel' | 'vendors' | 'ontact' | 'fields' | 'records';
 
 type AnalyticsResult = {
@@ -32,6 +32,9 @@ type AnalyticsResult = {
   status?: number;
   rows?: number;
   upstreamCount?: number;
+  truncated?: boolean;
+  maxRows?: number;
+  defaultWindowApplied?: boolean;
   error?: string;
   startedAt?: string;
   completedAt?: string;
@@ -129,10 +132,11 @@ function StatCard({ title, value, sub, icon: Icon }: { title: string; value: str
 
 function App() {
   const [payload, setPayload] = useState<Payload | null>(null);
-  const [source, setSource] = useState<ApiSource>('all');
+  const [source, setSource] = useState<ApiSource>('onvest');
   const [tab, setTab] = useState<Tab>('executive');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [maxRows, setMaxRows] = useState('5000');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -140,20 +144,22 @@ function App() {
     setLoading(true); setError('');
     try {
       const params = new URLSearchParams();
-      if (source !== 'all') params.set('source', source);
+      params.set('source', source);
+      params.set('maxRows', maxRows);
       if (from) params.set('from', from);
       if (to) params.set('to', to);
       const res = await fetch(`/api/analytics?${params}`);
       const data: unknown = await res.json();
       if (!isPayload(data)) throw new Error('The API route returned an unexpected payload shape.');
       setPayload(data);
-      if (!data.ok) setError('One or more API sources need attention. Check configuration/status cards below.');
+      if (!data.ok) setError(data.results[0]?.error || 'The selected API source needs attention.');
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
   };
 
   useEffect(() => { load(); }, []);
   const model = useMemo(() => mergeResults(payload?.results ?? []), [payload]);
+  const sourceResult = payload?.results?.[0];
   const tabs: { id: Tab; label: string }[] = [
     { id: 'executive', label: 'Executive' }, { id: 'funnel', label: 'Journey Funnel' }, { id: 'vendors', label: 'Vendors' },
     { id: 'ontact', label: 'Ontact Ops' }, { id: 'fields', label: 'Metric Dictionary' }, { id: 'records', label: 'Records' }
@@ -175,17 +181,19 @@ function App() {
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark">CIQ</div><div><b>ConvertIQ</b><span>Analytics command center</span></div></div>
       <nav>{tabs.map((t) => <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}>{t.label}</button>)}</nav>
-      <div className="sync-panel"><ShieldCheck size={18}/><b>Secure live API sync</b><span>Credentials stay in Cloudflare environment variables. The browser only calls /api/analytics.</span></div>
+      <div className="sync-panel"><ShieldCheck size={18}/><b>Resource-safe live sync</b><span>One API source is synced at a time to avoid Cloudflare 1102 CPU limits.</span></div>
     </aside>
 
     <section className="workspace">
       <header className="topbar">
-        <div><p className="eyebrow">Live API analytics · no database</p><h1>Onvest × Ontact Performance Dashboard</h1><p className="subcopy">Tracks every numeric parameter detected in the API payload and converts it into executive KPIs, funnel movement, vendor performance and call-centre operational views.</p></div>
+        <div><p className="eyebrow">Live API analytics · no database</p><h1>Onvest × Ontact Performance Dashboard</h1><p className="subcopy">Resource-safe dashboard that tracks every numeric parameter detected in the selected API payload and converts it into executive KPIs, funnel movement, vendor performance and call-centre operational views.</p></div>
         <button className="primary" onClick={load} disabled={loading}><RefreshCw size={16} className={loading ? 'spin' : ''}/> {loading ? 'Syncing' : 'Sync API'}</button>
       </header>
 
-      <section className="controls card"><SlidersHorizontal size={18}/><select value={source} onChange={(e) => setSource(e.target.value as ApiSource)}><option value="all">All sources</option><option value="onvest">Onvest only</option><option value="ontact">Ontact only</option></select><input type="date" value={from} onChange={(e) => setFrom(e.target.value)}/><input type="date" value={to} onChange={(e) => setTo(e.target.value)}/><button onClick={load}>Apply filters</button><span>{payload ? `Last sync: ${new Date(payload.generatedAt).toLocaleString()}` : 'Not synced yet'}</span></section>
+      <section className="controls card"><SlidersHorizontal size={18}/><select value={source} onChange={(e) => setSource(e.target.value as ApiSource)}><option value="onvest">Onvest Dashboard API</option><option value="ontact">Ontact Analytics API</option></select><input type="date" value={from} onChange={(e) => setFrom(e.target.value)}/><input type="date" value={to} onChange={(e) => setTo(e.target.value)}/><select value={maxRows} onChange={(e) => setMaxRows(e.target.value)}><option value="1000">1,000 rows</option><option value="5000">5,000 rows</option><option value="10000">10,000 rows</option><option value="15000">15,000 rows</option></select><button onClick={load}>Apply filters</button><span>{payload ? `Last sync: ${new Date(payload.generatedAt).toLocaleString()}` : 'Not synced yet'}</span></section>
       {error && <section className="notice">{error}</section>}
+      {sourceResult?.defaultWindowApplied && <section className="notice soft">No date range was selected, so the API request was limited to a safe recent window. Add dates above for a specific period.</section>}
+      {sourceResult?.truncated && <section className="notice soft">Large response protected: showing the first {number.format(sourceResult.rows ?? 0)} rows from an upstream count of {number.format(sourceResult.upstreamCount ?? 0)}. Use date filters to narrow the period.</section>}
 
       <section className="source-grid">
         {(payload?.results ?? []).map((r) => <section className="card source-card" key={r.source}><span className={r.ok ? 'pill ok' : 'pill warn'}>{r.ok ? 'Connected' : 'Attention'}</span><h3>{r.source.toUpperCase()}</h3><p>{r.ok ? `${number.format(r.rows ?? 0)} rows synced · ${number.format(r.upstreamCount ?? r.rows ?? 0)} upstream count` : r.error}</p></section>)}
