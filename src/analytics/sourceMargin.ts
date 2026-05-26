@@ -41,7 +41,7 @@ const RATE_CARD = {
     Blue: 900,
     Green: 1100,
     Purple: 1500
-  }
+  } as Record<string, number>
 };
 
 const n = (value: unknown): number => {
@@ -71,7 +71,7 @@ const profitBand = (margin: number, revenue: number): SourceMarginRow['profitBan
   return 'Loss Making';
 };
 
-type MutableMarginRow = Omit<SourceMarginRow, 'mondoRevenue' | 'mtnRevenue' | 'totalRevenue' | 'grossProfit' | 'grossMargin' | 'roas' | 'cplForm' | 'cpaAccepted' | 'ctr' | 'leadToAcceptedRate' | 'profitBand'> & { blcRevenue: number };
+type MutableMarginRow = Omit<SourceMarginRow, 'mondoRevenue' | 'mtnRevenue' | 'totalRevenue' | 'grossProfit' | 'grossMargin' | 'roas' | 'cplForm' | 'cpaAccepted' | 'ctr' | 'leadToAcceptedRate' | 'profitBand'>;
 
 const emptyRow = (date: string, source: string): MutableMarginRow => ({
   date,
@@ -91,9 +91,7 @@ const emptyRow = (date: string, source: string): MutableMarginRow => ({
   blcRevenue: 0
 });
 
-export function buildSourceMarginRows(records: RawAnalyticsRow[]): SourceMarginRow[] {
-  const grouped = new Map<string, MutableMarginRow>();
-
+const addOperationalSourceRows = (records: RawAnalyticsRow[], grouped: Map<string, MutableMarginRow>) => {
   records
     .filter((row) => row.__source === 'onvest' || row.offershop_source || row.Amount_Spent || row.Fetched_Leads)
     .forEach((row) => {
@@ -117,6 +115,30 @@ export function buildSourceMarginRows(records: RawAnalyticsRow[]): SourceMarginR
 
       grouped.set(key, current);
     });
+};
+
+const addUnattributedBlcRows = (records: RawAnalyticsRow[], grouped: Map<string, MutableMarginRow>) => {
+  records
+    .filter((row) => row.__source === 'powerbi' && String(row.query ?? '').toLowerCase() === 'segment_activations')
+    .forEach((row) => {
+      const segment = String(row.segment ?? '').trim();
+      const activationCount = n(row.count_activation ?? row.total_activations ?? row.activations);
+      const rate = RATE_CARD.blc[segment] ?? 0;
+      if (!segment || !activationCount || !rate) return;
+
+      const date = normalizeDate(row.date ?? row.activation ?? row.report_date);
+      const source = String(row.offershop_source ?? row.source ?? 'Unattributed BLC / Power BI');
+      const key = `${date}||${source}`;
+      const current = grouped.get(key) ?? emptyRow(date, source);
+      current.blcRevenue += activationCount * rate;
+      grouped.set(key, current);
+    });
+};
+
+export function buildSourceMarginRows(records: RawAnalyticsRow[]): SourceMarginRow[] {
+  const grouped = new Map<string, MutableMarginRow>();
+  addOperationalSourceRows(records, grouped);
+  addUnattributedBlcRows(records, grouped);
 
   return [...grouped.values()]
     .map((row) => {
