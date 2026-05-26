@@ -38,7 +38,8 @@
 .metric-flow + .grid,
 .commercial-bridge + .grid,
 .signal-grid-panel + .tab-brief,
-.api-health-strip + .tab-brief {
+.api-health-strip + .tab-brief,
+.dialer-filter-panel + .kpi-grid {
   margin-top: 16px;
 }
 
@@ -122,6 +123,75 @@
 td, th { font-variant-numeric: tabular-nums; }
 tbody tr:hover td { color: #071526; }
 .hero .primary { align-self: flex-start; box-shadow: 0 18px 36px rgba(15, 118, 110, 0.24); }
+
+/* Advanced Dialer Filtering */
+.dialer-filter-panel {
+  padding: 18px;
+  margin-bottom: 16px;
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 100% 0, rgba(37,99,235,.08), transparent 34%),
+    linear-gradient(135deg, rgba(255,255,255,.98), rgba(247,251,252,.95));
+}
+.dialer-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.dialer-filter-control {
+  display: grid;
+  gap: 6px;
+}
+.dialer-filter-control span {
+  color: #667789;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.dialer-filter-control select,
+.dialer-filter-control input {
+  width: 100%;
+  min-height: 42px;
+  border-radius: 14px;
+  border: 1px solid rgba(15,23,42,.12);
+  background: rgba(255,255,255,.92);
+  color: #071526;
+  padding: 0 12px;
+  font-weight: 700;
+  outline: none;
+}
+.dialer-filter-control select:focus,
+.dialer-filter-control input:focus {
+  border-color: rgba(15,118,110,.42);
+  box-shadow: var(--focus-ring);
+}
+.dialer-search-control {
+  grid-column: span 2;
+}
+.dialer-filter-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(15,23,42,.08);
+}
+.dialer-filter-summary span {
+  display: inline-flex;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: #f1f7f7;
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 900;
+}
+.dialer-filter-summary button,
+.dialer-filter-panel .secondary {
+  margin-left: auto;
+}
 
 /* Compact API confidence strip */
 .api-health-strip {
@@ -396,6 +466,7 @@ tbody tr:hover td { color: #071526; }
   .api-health-strip { grid-template-columns: 1fr; }
   .api-health-title { border-right: 0; border-bottom: 1px solid rgba(15,23,42,.08); }
   .metric-flow-grid { grid-template-columns: repeat(4, minmax(180px, 1fr)); }
+  .dialer-filter-grid { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
 }
 
 @media (max-width: 760px) {
@@ -406,7 +477,11 @@ tbody tr:hover td { color: #071526; }
   .metric-flow-grid,
   .commercial-bridge-grid,
   .signal-grid,
-  .api-health-sources { grid-template-columns: 1fr; }
+  .api-health-sources,
+  .dialer-filter-grid { grid-template-columns: 1fr; }
   .metric-flow-head,
   .signal-grid-head { flex-direction: column; }
+  .dialer-search-control { grid-column: span 1; }
+  .dialer-filter-summary button,
+  .dialer-filter-panel .secondary { margin-left: 0; }
 }
