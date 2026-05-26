@@ -63,16 +63,8 @@ export const calculateBlcRevenue = (segments: Partial<Record<BlcSegment, number>
   }, 0);
 };
 
-export const buildCommercialRateCardRows = (totals: Record<string, unknown>, segments: Partial<Record<BlcSegment, number>>, acceptedFee: number) => {
+export const buildCommercialRateCardRows = (totals: Record<string, unknown>, segments: Partial<Record<BlcSegment, number>>) => {
   return [
-    {
-      brand: 'TP1',
-      billableEvent: 'Accepted_Leads',
-      segment: 'Accepted',
-      volume: amount(totals.Accepted_Leads),
-      rate: acceptedFee,
-      revenue: amount(totals.Accepted_Leads) * acceptedFee
-    },
     ...Object.entries(RATE_CARD.mondo).map(([field, config]) => ({
       brand: config.brand,
       billableEvent: field,
@@ -100,19 +92,17 @@ export const buildCommercialRateCardRows = (totals: Record<string, unknown>, seg
   ];
 };
 
-export const calculateCommercialRevenue = (totals: Record<string, unknown>, powerBiRecords: Record<string, unknown>[], acceptedFee: number) => {
+export const calculateCommercialRevenue = (totals: Record<string, unknown>, powerBiRecords: Record<string, unknown>[]) => {
   const segments = getPowerBiBlcSegments(powerBiRecords);
-  const acceptedRevenue = amount(totals.Accepted_Leads) * acceptedFee;
   const mondoRevenue = calculateMondoRevenue(totals);
   const mtnRevenue = calculateMtnRevenue(totals);
   const blcRevenue = calculateBlcRevenue(segments);
   return {
-    acceptedRevenue,
     mondoRevenue,
     mtnRevenue,
     blcRevenue,
-    totalRevenue: acceptedRevenue + mondoRevenue + mtnRevenue + blcRevenue,
+    totalRevenue: mondoRevenue + mtnRevenue + blcRevenue,
     segments,
-    rows: buildCommercialRateCardRows(totals, segments, acceptedFee)
+    rows: buildCommercialRateCardRows(totals, segments)
   };
 };
