@@ -119,6 +119,11 @@ const median = (values: number[]): number => {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 };
 
+const timestampField = (entity: LifecycleEntity, key: LifecycleStageKey): string | undefined => {
+  const value = entity[`${key}At` as keyof LifecycleEntity];
+  return typeof value === 'string' ? value : undefined;
+};
+
 export function summarizeLeadLifecycle(records: LifecycleRecord[]): LifecycleSummary {
   const grouped = new Map<string, LifecycleEntity>();
   const coverageRows: LifecycleCoverageRow[] = LIFECYCLE_STAGES.map((stage) => ({ stage: stage.label, key: stage.key, timestampedRecords: 0, volume: 0, coverageRate: 0 }));
@@ -145,7 +150,7 @@ export function summarizeLeadLifecycle(records: LifecycleRecord[]): LifecycleSum
   });
 
   const entities = [...grouped.values()].map((entity) => {
-    const availableStages = LIFECYCLE_STAGES.reduce((count, stage) => count + ((entity as Record<string, unknown>)[`${stage.key}At`] ? 1 : 0), 0);
+    const availableStages = LIFECYCLE_STAGES.reduce((count, stage) => count + (timestampField(entity, stage.key) ? 1 : 0), 0);
     return { ...entity, availableStages };
   }).sort((a, b) => b.availableStages - a.availableStages);
 
@@ -163,7 +168,9 @@ export function summarizeLeadLifecycle(records: LifecycleRecord[]): LifecycleSum
   ];
 
   const lagRows = pairs.map((pair) => {
-    const values = entities.map((entity) => hoursBetween((entity as Record<string, string>)[`${pair.from}At`], (entity as Record<string, string>)[`${pair.to}At`])).filter((value): value is number => typeof value === 'number');
+    const values = entities
+      .map((entity) => hoursBetween(timestampField(entity, pair.from), timestampField(entity, pair.to)))
+      .filter((value): value is number => typeof value === 'number');
     return {
       step: pair.step,
       from: pair.from,
