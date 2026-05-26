@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AlertTriangle, BarChart3, CheckCircle2, DatabaseZap, Download, Filter, Gauge, Layers3, PhoneCall, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Target, TrendingUp, UsersRound, WalletCards, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, BarChart3, CheckCircle2, DatabaseZap, Download, Filter, Gauge, Layers3, ListChecks, PhoneCall, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Target, TrendingUp, UsersRound, WalletCards, type LucideIcon } from 'lucide-react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { calculateCommercialRevenue } from './commercialRateCard';
 import { buildSourceMarginRows, summarizeSourceMargins, type SourceMarginRow } from './analytics/sourceMargin';
