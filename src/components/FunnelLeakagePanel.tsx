@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { buildFunnelLeakageRows, buildSourceFunnelLeakage, summarizeFunnelLeakage, type FunnelRecord } from '../analytics/funnelLeakage';
 
@@ -19,6 +19,15 @@ type TransitionMetric = {
   group: 'Lead + validation funnel' | 'MTN conversion funnel' | 'Power BI / ONtact-BLC commercial funnel';
   from: StageMetric;
   to: StageMetric;
+};
+
+type AnalyticsPayload = {
+  results?: Array<{
+    source?: string;
+    analytics?: {
+      records?: FunnelRecord[];
+    };
+  }>;
 };
 
 const num = new Intl.NumberFormat('en-ZA', { maximumFractionDigits: 0 });
@@ -133,6 +142,13 @@ const metricValue = (record: FunnelRecord, metric: StageMetric): number => {
   return 0;
 };
 
+const fetchSupplementalRecords = async (source: 'ontact' | 'powerbi'): Promise<FunnelRecord[]> => {
+  const response = await fetch(`/api/analytics?source=${source}`, { cache: 'no-store' });
+  const payload = await response.json() as AnalyticsPayload;
+  const result = payload.results?.[0];
+  return (result?.analytics?.records ?? []).map((record) => ({ __source: source, ...record }));
+};
+
 const buildTransitionTrendRows = (records: FunnelRecord[], transition: TransitionMetric) => {
   const grouped = new Map<string, { date: string; fromVolume: number; retained: number }>();
 
@@ -168,11 +184,34 @@ const buildTransitionTrendRows = (records: FunnelRecord[], transition: Transitio
 
 export default function FunnelLeakagePanel({ records, limit = 40 }: Props) {
   const [selectedTransitionKey, setSelectedTransitionKey] = useState(DEFAULT_TRANSITION_KEY);
+  const [supplementalRecords, setSupplementalRecords] = useState<FunnelRecord[]>([]);
+  const [supplementalStatus, setSupplementalStatus] = useState<'loading' | 'loaded' | 'failed'>('loading');
   const selectedTransition = TRANSITIONS.find((transition) => transition.key === selectedTransitionKey) ?? TRANSITIONS[5];
+
+  useEffect(() => {
+    let active = true;
+    setSupplementalStatus('loading');
+    Promise.all([fetchSupplementalRecords('ontact'), fetchSupplementalRecords('powerbi')])
+      .then((chunks) => {
+        if (!active) return;
+        setSupplementalRecords(chunks.flat());
+        setSupplementalStatus('loaded');
+      })
+      .catch(() => {
+        if (!active) return;
+        setSupplementalRecords([]);
+        setSupplementalStatus('failed');
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const trendRecords = useMemo(() => [...records, ...supplementalRecords], [records, supplementalRecords]);
   const summary = summarizeFunnelLeakage(records);
   const rows = buildFunnelLeakageRows(records);
   const sourceRows = buildSourceFunnelLeakage(records).slice(0, limit);
-  const transitionTrendRows = useMemo(() => buildTransitionTrendRows(records, selectedTransition), [records, selectedTransition]);
+  const transitionTrendRows = useMemo(() => buildTransitionTrendRows(trendRecords, selectedTransition), [trendRecords, selectedTransition]);
   const transitionTotals = transitionTrendRows.reduce((acc, row) => {
     acc.fromVolume += row.fromVolume;
     acc.retained += row.retained;
@@ -244,7 +283,7 @@ export default function FunnelLeakagePanel({ records, limit = 40 }: Props) {
             <div>
               <p>{selectedTransition.from.label}</p>
               <strong>{num.format(transitionTotals.fromVolume)}</strong>
-              <span>Input volume</span>
+              <span>Input volume · {num.format(trendRecords.length)} trend records</span>
             </div>
           </section>
           <section className="card stat">
@@ -258,7 +297,7 @@ export default function FunnelLeakagePanel({ records, limit = 40 }: Props) {
             <div>
               <p>Drop-off Volume</p>
               <strong>{num.format(transitionTotals.dropoff)}</strong>
-              <span>{pct.format(ratio(transitionTotals.dropoff, transitionTotals.fromVolume))} dropped</span>
+              <span>{pct.format(ratio(transitionTotals.dropoff, transitionTotals.fromVolume))} dropped · supplemental {supplementalStatus}</span>
             </div>
           </section>
         </section>
