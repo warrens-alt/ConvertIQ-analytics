@@ -83,10 +83,10 @@ function productKey(intent: ParsedProductIntent): string {
 
 export function parseProductIntent(record: ProductRecord): ParsedProductIntent {
   const comments = clean(record.comments ?? record.product ?? record.product_name ?? record.package_name ?? '');
-  const segment = clean(record.segment ?? firstMatch(comments, SEGMENT_RE) || 'Unclassified segment');
-  const deviceModel = clean(record.device_model ?? firstMatch(comments, DEVICE_RE) || 'Unknown device');
-  const packageName = clean(record.package_name ?? firstMatch(comments, PACKAGE_RE) || 'Unknown package');
-  const network = clean(record.network ?? record.provider ?? firstMatch(comments, NETWORK_RE) || inferNetworkFromText(comments));
+  const segment = clean(record.segment ?? (firstMatch(comments, SEGMENT_RE) || 'Unclassified segment'));
+  const deviceModel = clean(record.device_model ?? (firstMatch(comments, DEVICE_RE) || 'Unknown device'));
+  const packageName = clean(record.package_name ?? (firstMatch(comments, PACKAGE_RE) || 'Unknown package'));
+  const network = clean(record.network ?? record.provider ?? (firstMatch(comments, NETWORK_RE) || inferNetworkFromText(comments)));
   const productFamily = inferProductFamily(deviceModel, packageName, network);
   const intent = { segment, deviceModel, packageName, network, productFamily, productKey: '' };
   intent.productKey = productKey(intent);
