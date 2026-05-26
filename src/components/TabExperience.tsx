@@ -24,23 +24,67 @@ export type SignalItem = {
   tone?: FlowTone;
 };
 
+export type HealthSource = {
+  label: string;
+  status: string;
+  rows: string;
+  fields: string;
+  tone?: FlowTone;
+};
+
 type BriefPoint = {
   label: string;
   value: string;
   note?: string;
 };
 
-export function TabBrief({
-  eyebrow,
+export function ApiHealthStrip({ sources, lastSync }: { sources: HealthSource[]; lastSync: string }) {
+  return (
+    <section className="api-health-strip card">
+      <div className="api-health-title">
+        <span>Live API health</span>
+        <strong>{lastSync}</strong>
+      </div>
+      <div className="api-health-sources">
+        {sources.map((source) => (
+          <article className={source.tone ?? 'neutral'} key={source.label}>
+            <b>{source.label}</b>
+            <span>{source.status}</span>
+            <small>{source.rows} rows · {source.fields} fields</small>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export function DecisionPanel({
   title,
-  summary,
-  points
+  decision,
+  reason,
+  tone = 'neutral',
+  children
 }: {
-  eyebrow: string;
   title: string;
-  summary: string;
-  points: BriefPoint[];
+  decision: string;
+  reason: string;
+  tone?: FlowTone;
+  children?: ReactNode;
 }) {
+  return (
+    <section className={`decision-panel card ${tone}`}>
+      <div>
+        <span>Recommended decision</span>
+        <h2>{title}</h2>
+        <strong>{decision}</strong>
+        <p>{reason}</p>
+      </div>
+      {children && <div className="decision-panel-side">{children}</div>}
+    </section>
+  );
+}
+
+export function TabBrief({ eyebrow, title, summary, points }: { eyebrow: string; title: string; summary: string; points: BriefPoint[] }) {
   return (
     <section className="tab-brief card">
       <div>
