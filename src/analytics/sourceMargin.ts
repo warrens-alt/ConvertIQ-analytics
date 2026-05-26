@@ -15,7 +15,6 @@ export type SourceMarginRow = {
   mondoSoldC: number;
   mondoSoldD: number;
   mtnActivatedSales: number;
-  acceptedRevenue: number;
   mondoRevenue: number;
   blcRevenue: number;
   mtnRevenue: number;
@@ -31,7 +30,6 @@ export type SourceMarginRow = {
 };
 
 const RATE_CARD = {
-  acceptedLead: 35,
   mondoA: 75,
   mondoB: 17,
   mondoC: 10,
@@ -73,7 +71,7 @@ const profitBand = (margin: number, revenue: number): SourceMarginRow['profitBan
   return 'Loss Making';
 };
 
-type MutableMarginRow = Omit<SourceMarginRow, 'acceptedRevenue' | 'mondoRevenue' | 'mtnRevenue' | 'totalRevenue' | 'grossProfit' | 'grossMargin' | 'roas' | 'cplForm' | 'cpaAccepted' | 'ctr' | 'leadToAcceptedRate' | 'profitBand'>;
+type MutableMarginRow = Omit<SourceMarginRow, 'mondoRevenue' | 'mtnRevenue' | 'totalRevenue' | 'grossProfit' | 'grossMargin' | 'roas' | 'cplForm' | 'cpaAccepted' | 'ctr' | 'leadToAcceptedRate' | 'profitBand'>;
 
 const emptyRow = (date: string, source: string): MutableMarginRow => ({
   date,
@@ -137,24 +135,22 @@ const addUnattributedBlcRows = (records: RawAnalyticsRow[], grouped: Map<string,
     });
 };
 
-export function buildSourceMarginRows(records: RawAnalyticsRow[], acceptedFee = RATE_CARD.acceptedLead): SourceMarginRow[] {
+export function buildSourceMarginRows(records: RawAnalyticsRow[]): SourceMarginRow[] {
   const grouped = new Map<string, MutableMarginRow>();
   addOperationalSourceRows(records, grouped);
   addUnattributedBlcRows(records, grouped);
 
   return [...grouped.values()]
     .map((row) => {
-      const acceptedRevenue = row.acceptedLeads * acceptedFee;
       const mondoRevenue = row.mondoSoldA * RATE_CARD.mondoA + row.mondoSoldB * RATE_CARD.mondoB + row.mondoSoldC * RATE_CARD.mondoC + row.mondoSoldD * RATE_CARD.mondoD;
       const mtnRevenue = row.mtnActivatedSales * RATE_CARD.mtnActivation;
-      const totalRevenue = acceptedRevenue + mondoRevenue + mtnRevenue + row.blcRevenue;
+      const totalRevenue = mondoRevenue + mtnRevenue + row.blcRevenue;
       const grossProfit = totalRevenue - row.adSpend;
       const grossMargin = ratio(grossProfit, totalRevenue);
       const roas = ratio(totalRevenue, row.adSpend);
 
       return {
         ...row,
-        acceptedRevenue,
         mondoRevenue,
         mtnRevenue,
         totalRevenue,
