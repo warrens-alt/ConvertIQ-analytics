@@ -167,8 +167,15 @@ tbody tr:hover td { color: #071526; }
   border-color: rgba(15,118,110,.42);
   box-shadow: var(--focus-ring);
 }
-.dialer-search-control {
-  grid-column: span 2;
+.dialer-search-control { grid-column: span 2; }
+.funnel-stage-selectors {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 12px;
+  min-width: min(560px, 100%);
+}
+.funnel-stage-selectors .funnel-stage-select {
+  min-width: 0;
 }
 .dialer-filter-summary {
   display: flex;
@@ -189,9 +196,7 @@ tbody tr:hover td { color: #071526; }
   font-weight: 900;
 }
 .dialer-filter-summary button,
-.dialer-filter-panel .secondary {
-  margin-left: auto;
-}
+.dialer-filter-panel .secondary { margin-left: auto; }
 
 /* Compact API confidence strip */
 .api-health-strip {
@@ -221,10 +226,7 @@ tbody tr:hover td { color: #071526; }
   letter-spacing: .13em;
   text-transform: uppercase;
 }
-.api-health-title strong {
-  color: #071526;
-  font-size: 13px;
-}
+.api-health-title strong { color: #071526; font-size: 13px; }
 .api-health-sources {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
@@ -467,6 +469,7 @@ tbody tr:hover td { color: #071526; }
   .api-health-title { border-right: 0; border-bottom: 1px solid rgba(15,23,42,.08); }
   .metric-flow-grid { grid-template-columns: repeat(4, minmax(180px, 1fr)); }
   .dialer-filter-grid { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
+  .funnel-stage-selectors { min-width: 100%; }
 }
 
 @media (max-width: 760px) {
@@ -478,7 +481,8 @@ tbody tr:hover td { color: #071526; }
   .commercial-bridge-grid,
   .signal-grid,
   .api-health-sources,
-  .dialer-filter-grid { grid-template-columns: 1fr; }
+  .dialer-filter-grid,
+  .funnel-stage-selectors { grid-template-columns: 1fr; }
   .metric-flow-head,
   .signal-grid-head { flex-direction: column; }
   .dialer-search-control { grid-column: span 1; }
