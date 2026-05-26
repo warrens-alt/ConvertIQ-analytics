@@ -7,18 +7,14 @@ type Props = {
   limit?: number;
 };
 
-type StageMetric = {
-  label: string;
-  aliases: string[];
-  queryHints?: string[];
-};
+type StageGroup = 'Lead + validation funnel' | 'MTN conversion funnel' | 'Power BI / ONtact-BLC commercial funnel';
 
-type TransitionMetric = {
+type StageMetric = {
   key: string;
   label: string;
-  group: 'Lead + validation funnel' | 'MTN conversion funnel' | 'Power BI / ONtact-BLC commercial funnel';
-  from: StageMetric;
-  to: StageMetric;
+  group: StageGroup;
+  aliases: string[];
+  queryHints?: string[];
 };
 
 type AnalyticsPayload = {
@@ -34,73 +30,56 @@ const num = new Intl.NumberFormat('en-ZA', { maximumFractionDigits: 0 });
 const money = new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR', maximumFractionDigits: 0 });
 const pct = new Intl.NumberFormat('en-ZA', { style: 'percent', maximumFractionDigits: 1 });
 
-const CORE_STAGES: StageMetric[] = [
-  { label: 'Leads', aliases: ['Fetched_Leads', 'Leads', 'Total_Leads', 'Total_Leads_Fetched'] },
-  { label: 'Standardised ID', aliases: ['Standardised_ID_Number', 'Standardised_ID', 'Standardized_ID_Number', 'Standardized_ID'] },
-  { label: 'Standardised Phone', aliases: ['Standardised_Phone_Number', 'Standardised_Phone', 'Standardized_Phone_Number', 'Standardized_Phone'] },
-  { label: 'Valid ID', aliases: ['Valid_IDNumber', 'Valid_ID_Number', 'Valid_ID', 'Valid_IDNumber_Check'] },
-  { label: 'Valid Phone', aliases: ['Valid_Phone', 'Valid_Phone_Number', 'ValidPhone'] },
-  { label: 'Valid Phone + ID', aliases: ['Total_Leads_WithValid_Phone_ID', 'Total_Leads_With_Valid_Phone_ID', 'Valid_Phone_ID', 'ValidPhoneID'] },
-  { label: 'BLC Vetted', aliases: ['Total_Leads_Passed_BLC_Vetting', 'Total_Leads_Passed_BLCVetting', 'Total_Leads_Passed_BLC_Vetting_BLC', 'Total_Leads_Passed_BLCVetting_BLC'] },
-  { label: 'BLC Dedupe Passed', aliases: ['Total_Leads_Dedupe_Passed_BLC', 'Total_Leads_Passed_BLC_Dedupe', 'Total_Leads_Passed_Dedupe_BLC', 'Total_Leads_DedupePassed_BLC'] },
-  { label: 'Delivered OnTact', aliases: ['Total_Leads_Delivered_OnTact', 'Total_Leads_Delivered_Ontact', 'Total_Leads_Delivered_To_OnTact', 'Total_Leads_Attempted_To_Delivered_OnTact'] },
-  { label: 'Accepted Leads', aliases: ['Accepted_Leads', 'Total_Accepted_Leads', 'Total_Leads_Accepted', 'AcceptedLeads'] },
-  { label: 'MTN Dialled', aliases: ['MTN_Dialed_Leads', 'MTN_Dialled_Leads', 'MTN_Dialed', 'MTN_Dialled'] },
-  { label: 'MTN Answered', aliases: ['MTN_Answered_Calls', 'MTN_Answered', 'MTN_Answered_Leads'] },
-  { label: 'Right Party Contact', aliases: ['MTN_Right_Party_Contact', 'Right_Party_Contact', 'RPC', 'MTN_RPC'] },
-  { label: 'MTN Sales', aliases: ['MTN_Sales', 'MTN_Sold', 'MTN_Total_Sales'] },
-  { label: 'MTN Activations', aliases: ['MTN_Activated_Sales', 'MTN_Activations', 'MTN_Activated', 'MTN_Total_Activations'] }
-];
+const STAGE_GROUPS: StageGroup[] = ['Lead + validation funnel', 'MTN conversion funnel', 'Power BI / ONtact-BLC commercial funnel'];
 
-const COMMERCIAL_STAGES = {
-  delivered: CORE_STAGES[8],
-  blcSales: {
+const STAGE_METRICS: StageMetric[] = [
+  { key: 'leads', label: 'Leads', group: 'Lead + validation funnel', aliases: ['Fetched_Leads', 'Leads', 'Total_Leads', 'Total_Leads_Fetched'] },
+  { key: 'standardised-id', label: 'Standardised ID', group: 'Lead + validation funnel', aliases: ['Standardised_ID_Number', 'Standardised_ID', 'Standardized_ID_Number', 'Standardized_ID'] },
+  { key: 'standardised-phone', label: 'Standardised Phone', group: 'Lead + validation funnel', aliases: ['Standardised_Phone_Number', 'Standardised_Phone', 'Standardized_Phone_Number', 'Standardized_Phone'] },
+  { key: 'valid-id', label: 'Valid ID', group: 'Lead + validation funnel', aliases: ['Valid_IDNumber', 'Valid_ID_Number', 'Valid_ID', 'Valid_IDNumber_Check'] },
+  { key: 'valid-phone', label: 'Valid Phone', group: 'Lead + validation funnel', aliases: ['Valid_Phone', 'Valid_Phone_Number', 'ValidPhone'] },
+  { key: 'valid-phone-id', label: 'Valid Phone + ID', group: 'Lead + validation funnel', aliases: ['Total_Leads_WithValid_Phone_ID', 'Total_Leads_With_Valid_Phone_ID', 'Valid_Phone_ID', 'ValidPhoneID'] },
+  { key: 'blc-vetted', label: 'BLC Vetted', group: 'Lead + validation funnel', aliases: ['Total_Leads_Passed_BLC_Vetting', 'Total_Leads_Passed_BLCVetting', 'Total_Leads_Passed_BLC_Vetting_BLC', 'Total_Leads_Passed_BLCVetting_BLC'] },
+  { key: 'blc-dedupe-passed', label: 'BLC Dedupe Passed', group: 'Lead + validation funnel', aliases: ['Total_Leads_Dedupe_Passed_BLC', 'Total_Leads_Passed_BLC_Dedupe', 'Total_Leads_Passed_Dedupe_BLC', 'Total_Leads_DedupePassed_BLC'] },
+  { key: 'delivered-ontact', label: 'Delivered OnTact', group: 'Lead + validation funnel', aliases: ['Total_Leads_Delivered_OnTact', 'Total_Leads_Delivered_Ontact', 'Total_Leads_Delivered_To_OnTact', 'Total_Leads_Attempted_To_Delivered_OnTact'] },
+  { key: 'accepted-leads', label: 'Accepted Leads', group: 'Lead + validation funnel', aliases: ['Accepted_Leads', 'Total_Accepted_Leads', 'Total_Leads_Accepted', 'AcceptedLeads'] },
+  { key: 'mtn-dialled', label: 'MTN Dialled', group: 'MTN conversion funnel', aliases: ['MTN_Dialed_Leads', 'MTN_Dialled_Leads', 'MTN_Dialed', 'MTN_Dialled'] },
+  { key: 'mtn-answered', label: 'MTN Answered', group: 'MTN conversion funnel', aliases: ['MTN_Answered_Calls', 'MTN_Answered', 'MTN_Answered_Leads'] },
+  { key: 'right-party-contact', label: 'Right Party Contact', group: 'MTN conversion funnel', aliases: ['MTN_Right_Party_Contact', 'Right_Party_Contact', 'RPC', 'MTN_RPC'] },
+  { key: 'mtn-sales', label: 'MTN Sales', group: 'MTN conversion funnel', aliases: ['MTN_Sales', 'MTN_Sold', 'MTN_Total_Sales'] },
+  { key: 'mtn-activations', label: 'MTN Activations', group: 'MTN conversion funnel', aliases: ['MTN_Activated_Sales', 'MTN_Activations', 'MTN_Activated', 'MTN_Total_Activations'] },
+  {
+    key: 'ontact-blc-sales',
     label: 'ONtact/BLC Sales',
+    group: 'Power BI / ONtact-BLC commercial funnel',
     aliases: ['BLC_Sales', 'Ontact_BLC_Sales', 'ONtact_BLC_Sales', 'Total_BLC_Sales', 'BLC_Total_Sales', 'count_sale', 'count_sales', 'sales_count'],
     queryHints: ['sale', 'sales', 'ontact', 'blc']
   },
-  captures: {
+  {
+    key: 'captures',
     label: 'Captures',
+    group: 'Power BI / ONtact-BLC commercial funnel',
     aliases: ['Captures', 'Capture', 'BLC_Captures', 'Total_Captures', 'Captured_Applications', 'Captured_Apps', 'count_capture', 'count_captures', 'captures_count'],
     queryHints: ['capture', 'captures']
   },
-  netApps: {
+  {
+    key: 'net-apps',
     label: 'Net Apps',
+    group: 'Power BI / ONtact-BLC commercial funnel',
     aliases: ['Net_Apps', 'Nett_Apps', 'NetApps', 'NettApps', 'BLC_Net_Apps', 'BLC_Nett_Apps', 'Total_Net_Apps', 'Total_Nett_Apps', 'count_net_apps', 'count_nett_apps', 'net_apps_count', 'nett_apps_count'],
     queryHints: ['net', 'nett', 'app', 'apps']
   },
-  activations: {
+  {
+    key: 'activations',
     label: 'Activations',
+    group: 'Power BI / ONtact-BLC commercial funnel',
     aliases: ['Activations', 'BLC_Activations', 'Total_Activations', 'Activated_Sales', 'MTN_Activated_Sales', 'count_activation', 'count_activations', 'activation_count', 'activations_count'],
     queryHints: ['activation', 'activations', 'activated']
   }
-} satisfies Record<string, StageMetric>;
-
-const makeSequentialTransitions = (stages: StageMetric[], group: TransitionMetric['group']) => stages.slice(0, -1).map((from, index) => {
-  const to = stages[index + 1];
-  return {
-    key: `${group}__${from.label}__${to.label}`,
-    label: `${from.label} → ${to.label}`,
-    group,
-    from,
-    to
-  } satisfies TransitionMetric;
-});
-
-const CORE_TRANSITIONS = makeSequentialTransitions(CORE_STAGES.slice(0, 10), 'Lead + validation funnel');
-const MTN_TRANSITIONS = makeSequentialTransitions(CORE_STAGES.slice(9), 'MTN conversion funnel');
-const COMMERCIAL_TRANSITIONS: TransitionMetric[] = [
-  { key: 'commercial__Delivered OnTact__ONtact/BLC Sales', label: 'Delivered OnTact → ONtact/BLC Sales', group: 'Power BI / ONtact-BLC commercial funnel', from: COMMERCIAL_STAGES.delivered, to: COMMERCIAL_STAGES.blcSales },
-  { key: 'commercial__ONtact/BLC Sales__Captures', label: 'ONtact/BLC Sales → Captures', group: 'Power BI / ONtact-BLC commercial funnel', from: COMMERCIAL_STAGES.blcSales, to: COMMERCIAL_STAGES.captures },
-  { key: 'commercial__Captures__Net Apps', label: 'Captures → Net Apps', group: 'Power BI / ONtact-BLC commercial funnel', from: COMMERCIAL_STAGES.captures, to: COMMERCIAL_STAGES.netApps },
-  { key: 'commercial__Net Apps__Activations', label: 'Net Apps → Activations', group: 'Power BI / ONtact-BLC commercial funnel', from: COMMERCIAL_STAGES.netApps, to: COMMERCIAL_STAGES.activations },
-  { key: 'commercial__Captures__Activations', label: 'Captures → Activations', group: 'Power BI / ONtact-BLC commercial funnel', from: COMMERCIAL_STAGES.captures, to: COMMERCIAL_STAGES.activations },
-  { key: 'commercial__ONtact/BLC Sales__Activations', label: 'ONtact/BLC Sales → Activations', group: 'Power BI / ONtact-BLC commercial funnel', from: COMMERCIAL_STAGES.blcSales, to: COMMERCIAL_STAGES.activations }
 ];
 
-const TRANSITIONS: TransitionMetric[] = [...CORE_TRANSITIONS, ...MTN_TRANSITIONS, ...COMMERCIAL_TRANSITIONS];
-const TRANSITION_GROUPS: TransitionMetric['group'][] = ['Lead + validation funnel', 'MTN conversion funnel', 'Power BI / ONtact-BLC commercial funnel'];
-const DEFAULT_TRANSITION_KEY = 'Lead + validation funnel__Valid Phone + ID__BLC Vetted';
+const DEFAULT_FROM_STAGE_KEY = 'valid-phone-id';
+const DEFAULT_TO_STAGE_KEY = 'blc-vetted';
 
 const n = (value: unknown): number => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -135,7 +114,7 @@ const metricValue = (record: FunnelRecord, metric: StageMetric): number => {
     if (value) return value;
   }
 
-  if (metric.label === 'Valid Phone + ID') {
+  if (metric.key === 'valid-phone-id') {
     return Math.min(n(record.Valid_IDNumber), n(record.Valid_Phone));
   }
 
@@ -149,12 +128,12 @@ const fetchSupplementalRecords = async (source: 'ontact' | 'powerbi'): Promise<F
   return (result?.analytics?.records ?? []).map((record) => ({ __source: source, ...record }));
 };
 
-const buildTransitionTrendRows = (records: FunnelRecord[], transition: TransitionMetric) => {
+const buildCustomTrendRows = (records: FunnelRecord[], fromStage: StageMetric, toStage: StageMetric) => {
   const grouped = new Map<string, { date: string; fromVolume: number; retained: number }>();
 
   records.forEach((record) => {
-    const fromValue = metricValue(record, transition.from);
-    const toValue = metricValue(record, transition.to);
+    const fromValue = metricValue(record, fromStage);
+    const toValue = metricValue(record, toStage);
     if (!fromValue && !toValue) return;
 
     const date = dateKey(record);
@@ -182,11 +161,30 @@ const buildTransitionTrendRows = (records: FunnelRecord[], transition: Transitio
     .sort((a, b) => a.date.localeCompare(b.date));
 };
 
+function StageSelect({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <label className="dialer-filter-control funnel-stage-select">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        {STAGE_GROUPS.map((group) => (
+          <optgroup key={group} label={group}>
+            {STAGE_METRICS.filter((metric) => metric.group === group).map((metric) => (
+              <option key={metric.key} value={metric.key}>{metric.label}</option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 export default function FunnelLeakagePanel({ records, limit = 40 }: Props) {
-  const [selectedTransitionKey, setSelectedTransitionKey] = useState(DEFAULT_TRANSITION_KEY);
+  const [fromStageKey, setFromStageKey] = useState(DEFAULT_FROM_STAGE_KEY);
+  const [toStageKey, setToStageKey] = useState(DEFAULT_TO_STAGE_KEY);
   const [supplementalRecords, setSupplementalRecords] = useState<FunnelRecord[]>([]);
   const [supplementalStatus, setSupplementalStatus] = useState<'loading' | 'loaded' | 'failed'>('loading');
-  const selectedTransition = TRANSITIONS.find((transition) => transition.key === selectedTransitionKey) ?? TRANSITIONS[5];
+  const fromStage = STAGE_METRICS.find((metric) => metric.key === fromStageKey) ?? STAGE_METRICS[5];
+  const toStage = STAGE_METRICS.find((metric) => metric.key === toStageKey) ?? STAGE_METRICS[6];
 
   useEffect(() => {
     let active = true;
@@ -211,8 +209,8 @@ export default function FunnelLeakagePanel({ records, limit = 40 }: Props) {
   const summary = summarizeFunnelLeakage(records);
   const rows = buildFunnelLeakageRows(records);
   const sourceRows = buildSourceFunnelLeakage(records).slice(0, limit);
-  const transitionTrendRows = useMemo(() => buildTransitionTrendRows(trendRecords, selectedTransition), [trendRecords, selectedTransition]);
-  const transitionTotals = transitionTrendRows.reduce((acc, row) => {
+  const customTrendRows = useMemo(() => buildCustomTrendRows(trendRecords, fromStage, toStage), [trendRecords, fromStage, toStage]);
+  const customTotals = customTrendRows.reduce((acc, row) => {
     acc.fromVolume += row.fromVolume;
     acc.retained += row.retained;
     acc.dropoff += row.dropoff;
@@ -262,53 +260,45 @@ export default function FunnelLeakagePanel({ records, limit = 40 }: Props) {
       <section className="card panel">
         <div className="panel-head">
           <div>
-            <h2>Funnel stage retention trend</h2>
-            <p>Choose any lead, MTN, Power BI or ONtact/BLC transition to trend retained volume versus drop-off volume over time.</p>
+            <h2>Custom funnel retention trend</h2>
+            <p>Select any From stage and any To stage from the lead, MTN, Power BI or ONtact/BLC metric catalogue.</p>
           </div>
-          <label className="dialer-filter-control funnel-stage-select">
-            <span>Funnel transition</span>
-            <select value={selectedTransitionKey} onChange={(event) => setSelectedTransitionKey(event.target.value)}>
-              {TRANSITION_GROUPS.map((group) => (
-                <optgroup key={group} label={group}>
-                  {TRANSITIONS.filter((transition) => transition.group === group).map((transition) => (
-                    <option key={transition.key} value={transition.key}>{transition.label}</option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </label>
+          <div className="funnel-stage-selectors">
+            <StageSelect label="From stage" value={fromStageKey} onChange={setFromStageKey} />
+            <StageSelect label="To stage" value={toStageKey} onChange={setToStageKey} />
+          </div>
         </div>
         <section className="kpi-grid compact">
           <section className="card stat">
             <div>
-              <p>{selectedTransition.from.label}</p>
-              <strong>{num.format(transitionTotals.fromVolume)}</strong>
+              <p>{fromStage.label}</p>
+              <strong>{num.format(customTotals.fromVolume)}</strong>
               <span>Input volume · {num.format(trendRecords.length)} trend records</span>
             </div>
           </section>
           <section className="card stat">
             <div>
-              <p>{selectedTransition.to.label} / Retained</p>
-              <strong>{num.format(transitionTotals.retained)}</strong>
-              <span>{pct.format(ratio(transitionTotals.retained, transitionTotals.fromVolume))} retained</span>
+              <p>{toStage.label} / Retained</p>
+              <strong>{num.format(customTotals.retained)}</strong>
+              <span>{pct.format(ratio(customTotals.retained, customTotals.fromVolume))} retained</span>
             </div>
           </section>
           <section className="card stat">
             <div>
               <p>Drop-off Volume</p>
-              <strong>{num.format(transitionTotals.dropoff)}</strong>
-              <span>{pct.format(ratio(transitionTotals.dropoff, transitionTotals.fromVolume))} dropped · supplemental {supplementalStatus}</span>
+              <strong>{num.format(customTotals.dropoff)}</strong>
+              <span>{pct.format(ratio(customTotals.dropoff, customTotals.fromVolume))} dropped · supplemental {supplementalStatus}</span>
             </div>
           </section>
         </section>
         <ResponsiveContainer width="100%" height={380}>
-          <LineChart data={transitionTrendRows}>
+          <LineChart data={customTrendRows}>
             <CartesianGrid vertical={false} />
             <XAxis dataKey="date" />
             <YAxis />
             <Tooltip />
-            <Line dataKey="retained" name={`Retained / ${selectedTransition.to.label}`} />
-            <Line dataKey="dropoff" name={`Drop-off from ${selectedTransition.from.label}`} />
+            <Line dataKey="retained" name={`Retained / ${toStage.label}`} />
+            <Line dataKey="dropoff" name={`Drop-off from ${fromStage.label}`} />
           </LineChart>
         </ResponsiveContainer>
       </section>
