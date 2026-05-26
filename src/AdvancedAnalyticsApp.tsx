@@ -1,175 +1,293 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AlertTriangle, BarChart3, CheckCircle2, DatabaseZap, Download, Filter, Gauge, Layers3, LineChart as LineIcon, ListChecks, PhoneCall, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Target, TrendingDown, TrendingUp, UsersRound, WalletCards, type LucideIcon } from 'lucide-react';
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Funnel, FunnelChart, LabelList, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { calculateCommercialRevenue, RATE_CARD } from './commercialRateCard';
+import { AlertTriangle, BarChart3, CheckCircle2, DatabaseZap, Download, Filter, Gauge, Layers3, PhoneCall, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Target, TrendingUp, UsersRound, WalletCards, type LucideIcon } from 'lucide-react';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { calculateCommercialRevenue } from './commercialRateCard';
+import { buildSourceMarginRows, summarizeSourceMargins, type SourceMarginRow } from './analytics/sourceMargin';
+import { buildSourcePropensityRows, summarizePropensity, type SourcePropensityRow } from './analytics/sourcePropensity';
+import { summarizeCallCenterEfficiency } from './analytics/callCenterEfficiency';
+import { summarizeFunnelLeakage } from './analytics/funnelLeakage';
+import { buildProductPropensityRows, summarizeProductPropensity } from './analytics/productPropensity';
+import CallCenterEfficiencyPanel from './components/CallCenterEfficiencyPanel';
+import FunnelLeakagePanel from './components/FunnelLeakagePanel';
+import ProductPropensityPanel from './components/ProductPropensityPanel';
 
 type AtomicSource = 'onvest' | 'ontact' | 'powerbi';
-type ApiSource = 'unified' | AtomicSource;
-type Tab = 'command' | 'journey' | 'ontact' | 'offernet' | 'vendors' | 'pnl';
+type Tab = 'command' | 'journey' | 'ontact' | 'offernet' | 'vendors' | 'pnl' | 'qa';
 type Depth = 'executive' | 'analytical' | 'complete';
-type Status = 'excellent' | 'good' | 'watch' | 'critical' | 'empty';
-type Row = Record<string, number | string>;
-type FieldProfile = { source?: string; field: string; rawField?: string; group: string; role: string; type: string; numeric: boolean; pii: boolean; nonNull: number; total?: number; sampleValues: string[] };
-type Analytics = { fields: { numeric: string[]; text: string[] }; fieldCatalog: FieldProfile[]; columns: string[]; totals: Record<string, number>; derived: Record<string, number>; byDate: Row[]; byVendor: Row[]; byAgent: Row[]; byStatus: Row[]; records: Record<string, unknown>[]; recordsReturned: number; recordLimit: number };
-type Result = { source: string; ok: boolean; configured: boolean; rows?: number; previewRows?: number; rawRows?: number; filteredRows?: number; excludedByDate?: number; undatedRowsExcluded?: number; upstreamCount?: number; totalsUsePreviewRows?: boolean; error?: string; filters?: { from?: string; to?: string; strategy?: string; applied?: boolean }; analytics?: Analytics };
+type Analytics = {
+  totals?: Record<string, number>;
+  byDate?: Record<string, unknown>[];
+  byVendor?: Record<string, unknown>[];
+  byAgent?: Record<string, unknown>[];
+  byStatus?: Record<string, unknown>[];
+  fieldCatalog?: Array<{ field: string; group: string; role: string; pii?: boolean; nonNull?: number; total?: number; numeric?: boolean; source?: string; rawField?: string }>;
+  records?: Record<string, unknown>[];
+  recordsReturned?: number;
+};
+type Result = {
+  source: string;
+  ok: boolean;
+  configured?: boolean;
+  rows?: number;
+  previewRows?: number;
+  rawRows?: number;
+  filteredRows?: number;
+  excludedByDate?: number;
+  undatedRowsExcluded?: number;
+  upstreamCount?: number;
+  totalsUsePreviewRows?: boolean;
+  error?: string;
+  filters?: { from?: string; to?: string; strategy?: string; applied?: boolean };
+  analytics?: Analytics;
+};
 type Payload = { ok: boolean; mode: string; generatedAt: string; results: Result[] };
-type MetricRow = { source: string; metric: string; apiField: string; group: string; status: string; value: string; formula: string };
+type Assumptions = { acceptedFee: number; ontactAgents: number; ontactOpexPerAgent: number };
 
-type Commercial = ReturnType<typeof calculateCommercialRevenue>;
+type Recommendation = {
+  priority: 'High' | 'Medium' | 'Low';
+  area: string;
+  action: string;
+  reason: string;
+};
 
 const money = new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR', maximumFractionDigits: 0 });
 const num = new Intl.NumberFormat('en-ZA', { maximumFractionDigits: 0 });
 const pct = new Intl.NumberFormat('en-ZA', { style: 'percent', maximumFractionDigits: 1 });
 const dec = new Intl.NumberFormat('en-ZA', { maximumFractionDigits: 1 });
-const DEFAULT_ASSUMPTIONS = { acceptedFee: 35, ontactAgents: 0, ontactOpexPerAgent: 0 };
-const NON_ADDITIVE = new Set(['uniqueid', 'lead_id', 'list_id', 'campaign_id', 'source_id', 'entry_list_id', 'start_epoch', 'end_epoch', 'gmt_offset_now', 'rank', 'model_id', 'dataset_id', 'report_id', 'phone_code']);
-const TERMS = {
-  command: ['commercial', 'revenue', 'profit', 'spend', 'fetched', 'accepted', 'sales', 'activation'],
-  journey: ['lead', 'fetched', 'valid', 'standard', 'blc', 'dedupe', 'delivered', 'accepted', 'sale', 'sold', 'activation', 'mtn', 'mondo', 'naga', 'debt'],
-  ontact: ['ontact', 'call', 'agent', 'status', 'dial', 'answer', 'rpc', 'length', 'user', 'owner', 'phone', 'term'],
-  offernet: ['media', 'amount_spent', 'impression', 'reach', 'click', 'landing', 'form', 'cpl', 'cpa', 'source', 'offershop'],
-  vendors: ['vendor', 'blc', 'mtn', 'mondo', 'naga', 'debt', 'power', 'activation', 'sales', 'sold', 'delivered', 'segment'],
-  pnl: ['commercial', 'revenue', 'profit', 'spend', 'opex', 'rate', 'cpa', 'cpl', 'fee', 'margin', 'roi']
+const DEFAULT_ASSUMPTIONS: Assumptions = { acceptedFee: 35, ontactAgents: 0, ontactOpexPerAgent: 0 };
+
+const n = (value: unknown): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') return Number(value.replace(/[^0-9.-]/g, '')) || 0;
+  return 0;
 };
+const ratio = (top: unknown, bottom: unknown): number => {
+  const denominator = n(bottom);
+  return denominator ? n(top) / denominator : 0;
+};
+const sourceLabel = (source: string) => source === 'onvest' ? 'Onvest Pipeline' : source === 'ontact' ? 'OnTact Dialler' : source === 'powerbi' ? 'Power BI Activations' : source;
+const tableLimit = (depth: Depth) => depth === 'executive' ? 20 : depth === 'analytical' ? 60 : 180;
+const isPayload = (value: unknown): value is Payload => Boolean(value && typeof value === 'object' && Array.isArray((value as Payload).results));
 
-const n = (v: unknown) => typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' ? Number(v.replace(/[^0-9.-]/g, '')) || 0 : 0;
-const ratio = (a: unknown, b: unknown) => n(b) ? n(a) / n(b) : 0;
-const clamp = (v: number) => Math.max(0, Math.min(100, v));
-const score = (value: number, target: number, lower = false) => clamp(target ? (lower ? target / Math.max(value, 0.00001) : value / target) * 100 : 0);
-const avg = (xs: number[]) => xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0;
-const title = (v: string) => v.replace(/^.*\./, '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/Mtn/g, 'MTN').replace(/Blc/g, 'BLC').replace(/Rpc/g, 'RPC').replace(/Id/g, 'ID').replace(/Ftp/g, 'FTP');
-const unique = (xs: string[]) => [...new Set(xs.filter(Boolean))].sort();
-
-function emptyAnalytics(): Analytics { return { fields: { numeric: [], text: [] }, fieldCatalog: [], columns: [], totals: { records: 0 }, derived: {}, byDate: [], byVendor: [], byAgent: [], byStatus: [], records: [], recordsReturned: 0, recordLimit: 0 }; }
-function isPayload(v: unknown): v is Payload { return Boolean(v && typeof v === 'object' && Array.isArray((v as Payload).results)); }
-function addBucket(map: Map<string, Row>, keyName: string, row: Row) { const key = String(row[keyName] ?? 'Unknown'); const bucket = map.get(key) ?? { [keyName]: key, records: 0 }; Object.entries(row).forEach(([k, v]) => { if (k !== keyName) bucket[k] = n(bucket[k]) + n(v); }); map.set(key, bucket); }
-function merge(results: Result[]): Analytics {
-  const available = results.filter(r => r.ok && r.analytics);
-  if (!available.length) return emptyAnalytics();
+function mergeResults(results: Result[]) {
+  const records: Record<string, unknown>[] = [];
   const totals: Record<string, number> = { records: 0 };
-  const columns = new Set<string>(['__source']); const numeric = new Set<string>(); const text = new Set<string>(); const fields: FieldProfile[] = []; const records: Record<string, unknown>[] = [];
-  const byDate = new Map<string, Row>(); const byVendor = new Map<string, Row>(); const byAgent = new Map<string, Row>(); const byStatus = new Map<string, Row>();
-  available.forEach(result => { const a = result.analytics!; a.fields.numeric.forEach(x => numeric.add(x)); a.fields.text.forEach(x => text.add(x)); a.columns.forEach(x => columns.add(x)); Object.entries(a.totals).forEach(([k, v]) => { totals[k] = (totals[k] ?? 0) + n(v); }); fields.push(...a.fieldCatalog.map(f => ({ ...f, source: result.source, rawField: f.field, field: `${result.source}.${f.field}` }))); records.push(...a.records.map(r => ({ __source: result.source, ...r }))); a.byDate.forEach(r => addBucket(byDate, 'date', r)); a.byVendor.forEach(r => addBucket(byVendor, 'vendor', r)); a.byAgent.forEach(r => addBucket(byAgent, 'agent', r)); a.byStatus.forEach(r => addBucket(byStatus, 'status', r)); });
-  return { fields: { numeric: [...numeric].sort(), text: [...text].sort() }, fieldCatalog: fields, columns: [...columns], totals, derived: {}, byDate: [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date))), byVendor: [...byVendor.values()].sort((a, b) => n(b.records) - n(a.records)), byAgent: [...byAgent.values()].sort((a, b) => n(b.records) - n(a.records)).slice(0, 100), byStatus: [...byStatus.values()].sort((a, b) => n(b.records) - n(a.records)), records: records.slice(0, 5000), recordsReturned: records.length, recordLimit: records.length };
-}
-function pbiCanonical(records: Record<string, unknown>[]) { const sum = (q: string, f: string) => records.filter(r => r.__source === 'powerbi' && r.query === q).reduce((s, r) => s + n(r[f]), 0); return { activations: sum('activation_dates', 'count_activation'), captureComplete: sum('capture_complete_dates', 'count_capture_complete'), nettApps: sum('nett_app_dates', 'count_nett_app'), dateCreated: sum('date_created_on_capture_complete', 'count_date_created') }; }
-function core(t: Record<string, number>, pbi: ReturnType<typeof pbiCanonical>) { const mondoSales = n(t.Total_Leads_Sold_A) + n(t.Total_Leads_Sold_B) + n(t.Total_Leads_Sold_C) + n(t.Total_Leads_Sold_D) + n(t.Total_Leads_Sold_Other); const delivered = n(t.Total_Leads_Delivered_OnTact) + n(t.Total_Leads_Delivered_MTN) + n(t.Total_Leads_Delivered_Mondo) + n(t.DebtRescue_LeadDelivered) + n(t.Naga_FileDroppedOnFTP); const accepted = n(t.Accepted_Leads); const sales = n(t.MTN_Sales) + mondoSales; return { spend: n(t.Amount_Spent), impressions: n(t.Impressions), clicks: n(t.Clicks), lpv: n(t.Landing_Page_View), forms: n(t.Form_Completion), fetched: n(t.Fetched_Leads), valid: n(t.Total_Leads_WithValid_Phone_ID) || Math.min(n(t.Valid_IDNumber), n(t.Valid_Phone)), delivered, accepted, sales, activations: n(t.MTN_Activated_Sales) + pbi.activations, calls: n(t.__call_records) || n(t.records), talkSeconds: n(t.length_in_sec), dialed: n(t.MTN_Dialed_Leads), answered: n(t.MTN_Answered_Calls), rpc: n(t.MTN_Right_Party_Contact), cpl: ratio(t.Amount_Spent, n(t.Form_Completion) || n(t.Fetched_Leads)), cpaAccepted: ratio(t.Amount_Spent, accepted) }; }
-function isAdditive(f: FieldProfile) { const raw = (f.rawField ?? f.field).split('.').pop() ?? f.field; const low = raw.toLowerCase(); return f.numeric && !f.pii && f.role !== 'identifier' && f.role !== 'metadata' && f.role !== 'date/time' && !f.group.toLowerCase().includes('identifier') && !NON_ADDITIVE.has(raw) && !NON_ADDITIVE.has(low) && !low.endsWith('_id') && low !== 'id'; }
-function metrics(a: Analytics, t: Record<string, number>, commercial: Commercial, grossProfit: number, pbi: ReturnType<typeof pbiCanonical>): MetricRow[] {
-  const api = a.fieldCatalog.map(f => { const raw = f.rawField ?? f.field; const additive = isAdditive(f); const override = f.source === 'powerbi' && raw === 'count_activation' ? pbi.activations : f.source === 'powerbi' && raw === 'count_capture_complete' ? pbi.captureComplete : f.source === 'powerbi' && raw === 'count_nett_app' ? pbi.nettApps : undefined; const value = additive ? (override ?? n(f.total)) : f.nonNull; const status = f.pii ? 'protected' : f.nonNull === 0 ? 'missing' : additive && value === 0 ? 'zero' : 'live'; return { source: f.source ?? 'unknown', metric: title(raw), apiField: raw, group: f.group, status, value: f.pii ? `Protected (${num.format(f.nonNull)})` : /amount|spend|revenue|profit|opex|cpl|cpa|fee|rate|cost/i.test(raw) ? money.format(n(value)) : additive ? num.format(n(value)) : `${num.format(f.nonNull)} present`, formula: additive ? `SUM(${raw}) after filters` : 'Presence count after filters' }; });
-  const d = core(t, pbi);
-  const derived: MetricRow[] = [
-    { source: 'derived', metric: 'Total Revenue', apiField: 'commercial.totalRevenue', group: 'Profit and loss', status: 'derived', value: money.format(commercial.totalRevenue), formula: 'Accepted + BLC + MTN + Mondo revenue' },
-    { source: 'derived', metric: 'Gross Profit', apiField: 'commercial.grossProfit', group: 'Profit and loss', status: 'derived', value: money.format(grossProfit), formula: 'Revenue - media spend - OnTact fixed Opex' },
-    { source: 'derived', metric: 'BLC Revenue', apiField: 'commercial.blcRevenue', group: 'Profit and loss', status: 'derived', value: money.format(commercial.blcRevenue), formula: 'Power BI segment activations × BLC rates' },
-    { source: 'derived', metric: 'MTN Revenue', apiField: 'commercial.mtnRevenue', group: 'Profit and loss', status: 'derived', value: money.format(commercial.mtnRevenue), formula: 'MTN_Activated_Sales × R200' },
-    { source: 'derived', metric: 'Mondo Revenue', apiField: 'commercial.mondoRevenue', group: 'Profit and loss', status: 'derived', value: money.format(commercial.mondoRevenue), formula: 'Mondo sold classes × class rates' },
-    { source: 'derived', metric: 'CPL', apiField: 'derived.cpl', group: 'Offernet paid media', status: 'derived', value: money.format(d.cpl), formula: 'Spend ÷ forms or fetched leads' },
-    { source: 'derived', metric: 'CPA Accepted', apiField: 'derived.cpaAccepted', group: 'Offernet paid media', status: 'derived', value: money.format(d.cpaAccepted), formula: 'Spend ÷ Accepted_Leads only' }
-  ];
-  return [...api, ...derived].sort((x, y) => x.group.localeCompare(y.group) || x.metric.localeCompare(y.metric));
-}
-function sourceRows(records: Record<string, unknown>[]) { const map = new Map<string, Record<string, unknown>>(); records.filter(r => r.__source === 'onvest' || r.offershop_source).forEach(r => { const key = String(r.offershop_source ?? r.source ?? r.__source ?? 'Unclassified'); const b = map.get(key) ?? { name: key, records: 0 }; b.records = n(b.records) + 1; Object.entries(r).forEach(([k, v]) => { if (!k.startsWith('__') && k !== 'offershop_source' && k !== 'date' && (typeof v === 'number' || (typeof v === 'string' && /^-?[\d,.]+$/.test(v.trim())))) b[k] = n(b[k]) + n(v); }); map.set(key, b); }); return [...map.values()]; }
-function perf(name: string, r: Record<string, unknown>, pbi: ReturnType<typeof pbiCanonical>) { const spend = n(r.Amount_Spent), fetched = n(r.Fetched_Leads), valid = n(r.Total_Leads_WithValid_Phone_ID) || Math.min(n(r.Valid_IDNumber), n(r.Valid_Phone)); const delivered = n(r.Total_Leads_Delivered_OnTact) + n(r.Total_Leads_Delivered_MTN) + n(r.Total_Leads_Delivered_Mondo) + n(r.DebtRescue_LeadDelivered) + n(r.Naga_FileDroppedOnFTP); const accepted = n(r.Accepted_Leads), sales = n(r.MTN_Sales) + n(r.Total_Leads_Sold_A) + n(r.Total_Leads_Sold_B) + n(r.Total_Leads_Sold_C) + n(r.Total_Leads_Sold_D) + n(r.Total_Leads_Sold_Other), activations = n(r.MTN_Activated_Sales) + (name === 'Power BI' ? pbi.activations : 0); const validationRate = ratio(valid, fetched), deliveryRate = ratio(delivered, valid || fetched), acceptanceRate = ratio(accepted, fetched || delivered), salesRate = ratio(sales, accepted || fetched), activationRate = ratio(activations, sales || pbi.captureComplete); const scoreValue = avg([score(validationRate, .95), score(deliveryRate, .7), score(acceptanceRate, .45), score(salesRate, .18), score(activationRate, .08)]); return { name, score: scoreValue, spend, fetched, valid, delivered, accepted, sales, activations, cpl: ratio(spend, n(r.Form_Completion) || fetched), cpaAccepted: ratio(spend, accepted), validationRate, deliveryRate, acceptanceRate, salesRate, activationRate }; }
-function journeyRows(t: Record<string, number>, pbi: ReturnType<typeof pbiCanonical>) { const d = core(t, pbi); const rows = [['Spend', d.spend, 'Amount_Spent', 'Offernet'], ['Impressions', d.impressions, 'Impressions', 'Offernet'], ['Clicks', d.clicks, 'Clicks', 'Offernet'], ['Landing views', d.lpv, 'Landing_Page_View', 'Offernet'], ['Forms', d.forms, 'Form_Completion', 'Offernet'], ['Fetched', d.fetched, 'Fetched_Leads', 'Ingestion'], ['Valid ID + phone', d.valid, 'Total_Leads_WithValid_Phone_ID', 'Validation'], ['BLC vetted', n(t.Total_Leads_Passed_BLC_Vetting), 'Total_Leads_Passed_BLC_Vetting', 'BLC'], ['Dedupe passed', n(t.Total_Leads_Dedupe_Passed_BLC), 'Total_Leads_Dedupe_Passed_BLC', 'BLC'], ['Delivered', d.delivered, 'Delivered vendor fields', 'Vendors'], ['Accepted', d.accepted, 'Accepted_Leads', 'Commercial TP1'], ['Dialled', d.dialed, 'MTN_Dialed_Leads', 'OnTact / MTN'], ['Answered', d.answered, 'MTN_Answered_Calls', 'OnTact / MTN'], ['RPC', d.rpc, 'MTN_Right_Party_Contact', 'OnTact / MTN'], ['Sales', d.sales, 'MTN + Mondo sold fields', 'Vendors'], ['Activations', d.activations, 'MTN + Power BI activations', 'Fulfilment']].filter(r => n(r[1]) > 0); return rows.map((r, i) => ({ stage: String(r[0]), value: n(r[1]), apiField: String(r[2]), owner: String(r[3]), rate: i ? ratio(r[1], rows[i - 1][1]) : 1, lost: i ? Math.max(n(rows[i - 1][1]) - n(r[1]), 0) : 0, costPerStage: n(r[1]) ? d.spend / n(r[1]) : 0 })); }
-function termFilter(rows: MetricRow[], terms: string[], search: string) { const q = search.toLowerCase(); return rows.filter(m => (!q || `${m.source} ${m.metric} ${m.apiField} ${m.group}`.toLowerCase().includes(q)) && terms.some(t => `${m.source} ${m.metric} ${m.apiField} ${m.group}`.toLowerCase().includes(t))); }
-function limitFor(depth: Depth) { return depth === 'executive' ? 24 : depth === 'analytical' ? 80 : 260; }
-function csv(name: string, rows: Record<string, unknown>[]) { const headers = Array.from(new Set(rows.flatMap(r => Object.keys(r)))); const data = [headers, ...rows.map(r => headers.map(h => r[h] ?? ''))].map(r => r.map(c => `"${String(c).replaceAll('"', '""')}"`).join(',')).join('\n'); const url = URL.createObjectURL(new Blob([data], { type: 'text/csv' })); const a = document.createElement('a'); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url); }
-function vendor(record: Record<string, unknown>) { const text = `${record.vendor ?? ''} ${record.offershop_source ?? ''} ${record.owner ?? ''} ${record.campaign_id ?? ''} ${record.query ?? ''}`.toLowerCase(); if (text.includes('mondo')) return 'Mondo'; if (text.includes('mtn')) return 'MTN'; if (text.includes('blc')) return 'BLC'; if (text.includes('naga')) return 'Naga'; if (text.includes('debt')) return 'Debt Rescue'; if (text.includes('power')) return 'Power BI'; if (text.includes('ontact')) return 'OnTact'; return 'Unclassified'; }
+  const byDate = new Map<string, Record<string, unknown>>();
+  const byVendor = new Map<string, Record<string, unknown>>();
+  const byAgent = new Map<string, Record<string, unknown>>();
+  const byStatus = new Map<string, Record<string, unknown>>();
+  const fieldCatalog: NonNullable<Analytics['fieldCatalog']> = [];
 
-function Card({ title, value, sub, icon: Icon }: { title: string; value: string; sub: string; icon: LucideIcon }) { return <section className="card stat"><div className="stat-icon"><Icon size={18}/></div><div><p>{title}</p><strong>{value}</strong><span>{sub}</span></div></section>; }
-function Panel({ title, sub, children, action }: { title: string; sub?: string; children: ReactNode; action?: ReactNode }) { return <section className="card panel"><div className="panel-head"><div><h2>{title}</h2>{sub && <p>{sub}</p>}</div>{action}</div>{children}</section>; }
-function StatusBadge({ status }: { status: Status }) { return <span className={`status ${status}`}>{status}</span>; }
-function Table({ rows }: { rows: Record<string, unknown>[] }) { const keys = Array.from(new Set(rows.flatMap(r => Object.keys(r)))).slice(0, 80); if (!rows.length) return <div className="empty-state"><b>No rows returned</b><span>Sync the live API or adjust filters.</span></div>; return <div className="table-wrap"><table><thead><tr>{keys.map(k => <th key={k}>{k}</th>)}</tr></thead><tbody>{rows.map((r, i) => <tr key={i}>{keys.map(k => <td key={k}>{String(r[k] ?? '')}</td>)}</tr>)}</tbody></table></div>; }
-function AssumptionInput({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) { return <label className="assumption"><span>{label}</span><input type="number" value={value} onChange={e => onChange(Number(e.target.value) || 0)}/></label>; }
-function MetricWall({ rows, limit }: { rows: MetricRow[]; limit: number }) { return <div className="metric-wall">{rows.slice(0, limit).map((m, i) => <article className={`metric-tile ${m.status}`} key={`${m.source}-${m.apiField}-${i}`}><header><span>{m.source}</span><span className={`metric-badge ${m.status}`}>{m.status}</span></header><h3>{m.metric}</h3><strong>{m.value}</strong><p>{m.group}</p><small>{m.apiField}</small><footer><span>{m.formula}</span></footer></article>)}</div>; }
-function HealthGrid({ items }: { items: { label: string; score: number; detail: string; icon: LucideIcon }[] }) { return <div className="diagnostic-list">{items.map(item => <article className={`diagnostic ${item.score >= 80 ? 'excellent' : item.score >= 60 ? 'good' : item.score >= 35 ? 'watch' : 'critical'}`} key={item.label}><item.icon size={16}/><div><b>{item.label}</b><span>{item.detail}</span></div><strong>{dec.format(item.score)}</strong></article>)}</div>; }
+  const addBucket = (map: Map<string, Record<string, unknown>>, keyName: string, row: Record<string, unknown>) => {
+    const key = String(row[keyName] ?? 'Unknown');
+    const bucket = map.get(key) ?? { [keyName]: key, records: 0 };
+    Object.entries(row).forEach(([field, value]) => {
+      if (field === keyName) return;
+      if (typeof value === 'number' || (typeof value === 'string' && /^-?[\d,.]+$/.test(value.trim()))) {
+        bucket[field] = n(bucket[field]) + n(value);
+      }
+    });
+    map.set(key, bucket);
+  };
+
+  results.filter((result) => result.ok && result.analytics).forEach((result) => {
+    const analytics = result.analytics!;
+    Object.entries(analytics.totals ?? {}).forEach(([field, value]) => {
+      totals[field] = (totals[field] ?? 0) + n(value);
+    });
+    fieldCatalog.push(...(analytics.fieldCatalog ?? []).map((field) => ({ ...field, source: result.source, rawField: field.field, field: `${result.source}.${field.field}` })));
+    records.push(...(analytics.records ?? []).map((record) => ({ __source: result.source, ...record })));
+    (analytics.byDate ?? []).forEach((row) => addBucket(byDate, 'date', row));
+    (analytics.byVendor ?? []).forEach((row) => addBucket(byVendor, 'vendor', row));
+    (analytics.byAgent ?? []).forEach((row) => addBucket(byAgent, 'agent', row));
+    (analytics.byStatus ?? []).forEach((row) => addBucket(byStatus, 'status', row));
+  });
+
+  totals.records = records.length;
+  return {
+    records,
+    totals,
+    fieldCatalog,
+    byDate: [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date))),
+    byVendor: [...byVendor.values()].sort((a, b) => n(b.records) - n(a.records)),
+    byAgent: [...byAgent.values()].sort((a, b) => n(b.records) - n(a.records)),
+    byStatus: [...byStatus.values()].sort((a, b) => n(b.records) - n(a.records))
+  };
+}
+
+function coreMetrics(totals: Record<string, number>, powerBiRecords: Record<string, unknown>[]) {
+  const pbiActivations = powerBiRecords.filter((row) => row.query === 'activation_dates').reduce((sum, row) => sum + n(row.count_activation), 0);
+  const mondoSales = n(totals.Total_Leads_Sold_A) + n(totals.Total_Leads_Sold_B) + n(totals.Total_Leads_Sold_C) + n(totals.Total_Leads_Sold_D) + n(totals.Total_Leads_Sold_Other);
+  const delivered = n(totals.Total_Leads_Delivered_OnTact) + n(totals.Total_Leads_Delivered_MTN) + n(totals.Total_Leads_Delivered_Mondo) + n(totals.DebtRescue_LeadDelivered) + n(totals.Naga_FileDroppedOnFTP);
+  const accepted = n(totals.Accepted_Leads);
+  const sales = n(totals.MTN_Sales) + mondoSales;
+  return {
+    spend: n(totals.Amount_Spent),
+    impressions: n(totals.Impressions),
+    clicks: n(totals.Clicks),
+    landingViews: n(totals.Landing_Page_View),
+    forms: n(totals.Form_Completion),
+    fetched: n(totals.Fetched_Leads),
+    valid: n(totals.Total_Leads_WithValid_Phone_ID) || Math.min(n(totals.Valid_IDNumber), n(totals.Valid_Phone)),
+    delivered,
+    accepted,
+    sales,
+    activations: n(totals.MTN_Activated_Sales) + pbiActivations,
+    dialed: n(totals.MTN_Dialed_Leads),
+    answered: n(totals.MTN_Answered_Calls),
+    rpc: n(totals.MTN_Right_Party_Contact),
+    cpl: ratio(totals.Amount_Spent, n(totals.Form_Completion) || n(totals.Fetched_Leads)),
+    cpaAccepted: ratio(totals.Amount_Spent, accepted)
+  };
+}
+
+function buildRecommendations(args: {
+  marginRows: SourceMarginRow[];
+  propensityRows: SourcePropensityRow[];
+  callSummary: ReturnType<typeof summarizeCallCenterEfficiency>;
+  funnelSummary: ReturnType<typeof summarizeFunnelLeakage>;
+  productSummary: ReturnType<typeof summarizeProductPropensity>;
+}): Recommendation[] {
+  const recommendations: Recommendation[] = [];
+  const bestMargin = args.marginRows[0];
+  const lossSource = [...args.marginRows].sort((a, b) => a.grossProfit - b.grossProfit)[0];
+  const bestPropensity = args.propensityRows[0];
+
+  if (bestMargin && bestMargin.grossProfit > 0) {
+    recommendations.push({ priority: 'High', area: 'Source margin', action: `Scale ${bestMargin.source}`, reason: `${money.format(bestMargin.grossProfit)} gross profit and ${dec.format(bestMargin.roas)}x ROAS.` });
+  }
+  if (lossSource && lossSource.grossProfit < 0) {
+    recommendations.push({ priority: 'High', area: 'Budget control', action: `Review spend on ${lossSource.source}`, reason: `${money.format(lossSource.grossProfit)} gross profit with ${pct.format(lossSource.grossMargin)} margin.` });
+  }
+  if (bestPropensity && bestPropensity.score >= 70) {
+    recommendations.push({ priority: 'High', area: 'Predictive routing', action: `Prioritise ${bestPropensity.source}`, reason: `Propensity score ${bestPropensity.score}; ${bestPropensity.routingTier}.` });
+  }
+  if (args.callSummary.reviewAgents > 0) {
+    recommendations.push({ priority: 'Medium', area: 'OnTact coaching', action: 'Review flagged agents', reason: `${num.format(args.callSummary.reviewAgents)} agents flagged for short-call, long-call or low-conversion behaviour.` });
+  }
+  if (args.funnelSummary.criticalLeaks > 0) {
+    recommendations.push({ priority: 'High', area: 'Funnel leakage', action: `Fix ${args.funnelSummary.highestLeakageStage}`, reason: `${pct.format(args.funnelSummary.highestLeakageRate)} leakage at the weakest stage.` });
+  }
+  if (args.productSummary.scaleProducts > 0) {
+    recommendations.push({ priority: 'Medium', area: 'Product routing', action: `Scale ${args.productSummary.bestProduct}`, reason: `Best product score ${args.productSummary.bestProductScore}.` });
+  }
+
+  return recommendations.length ? recommendations : [{ priority: 'Low', area: 'Data readiness', action: 'Continue collecting live API records', reason: 'No strong prescriptive action was triggered yet.' }];
+}
+
+function Card({ title, value, sub, icon: Icon }: { title: string; value: string; sub: string; icon: LucideIcon }) {
+  return <section className="card stat"><div className="stat-icon"><Icon size={18}/></div><div><p>{title}</p><strong>{value}</strong><span>{sub}</span></div></section>;
+}
+function Panel({ title, sub, children, action }: { title: string; sub?: string; children: ReactNode; action?: ReactNode }) {
+  return <section className="card panel"><div className="panel-head"><div><h2>{title}</h2>{sub && <p>{sub}</p>}</div>{action}</div>{children}</section>;
+}
+function Table({ rows }: { rows: Record<string, unknown>[] }) {
+  const keys = Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 80);
+  if (!rows.length) return <div className="empty-state"><b>No rows returned</b><span>Sync the live API or adjust filters.</span></div>;
+  return <div className="table-wrap"><table><thead><tr>{keys.map((key) => <th key={key}>{key}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{keys.map((key) => <td key={key}>{String(row[key] ?? '')}</td>)}</tr>)}</tbody></table></div>;
+}
+function AssumptionInput({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
+  return <label className="assumption"><span>{label}</span><input type="number" value={value} onChange={(event) => onChange(Number(event.target.value) || 0)} /></label>;
+}
+function csv(name: string, rows: Record<string, unknown>[]) {
+  const headers = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
+  const data = [headers, ...rows.map((row) => headers.map((header) => row[header] ?? ''))].map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(',')).join('\n');
+  const url = URL.createObjectURL(new Blob([data], { type: 'text/csv' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function AdvancedAnalyticsApp() {
   const [payload, setPayload] = useState<Payload | null>(null);
-  const [source, setSource] = useState<ApiSource>('unified');
   const [tab, setTab] = useState<Tab>('command');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [depth, setDepth] = useState<Depth>('analytical');
-  const [metricSearch, setMetricSearch] = useState('');
-  const [rowSearch, setRowSearch] = useState('');
-  const [sourceDrill, setSourceDrill] = useState('all');
-  const [vendorDrill, setVendorDrill] = useState('all');
-  const [agentDrill, setAgentDrill] = useState('all');
-  const [statusDrill, setStatusDrill] = useState('all');
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [assumptions, setAssumptions] = useState(DEFAULT_ASSUMPTIONS);
+  const [assumptions, setAssumptions] = useState<Assumptions>(DEFAULT_ASSUMPTIONS);
 
-  async function fetchOne(target: AtomicSource): Promise<Result> {
-    const params = new URLSearchParams({ source: target });
+  async function fetchSource(source: AtomicSource): Promise<Result> {
+    const params = new URLSearchParams({ source });
     if (from) params.set('from', from);
     if (to) params.set('to', to);
     const response = await fetch(`/api/analytics?${params}`, { cache: 'no-store' });
     const data = await response.json();
-    if (!isPayload(data)) throw new Error(`${target} returned an unexpected payload.`);
-    return data.results[0] ?? { source: target, ok: false, configured: true, error: `${target} returned no result.` };
+    if (!isPayload(data)) throw new Error(`${source} returned an unexpected payload.`);
+    return data.results[0] ?? { source, ok: false, error: `${source} returned no result.` };
   }
-  async function load(next: ApiSource = source) {
-    setLoading(true); setError('');
-    const targets: AtomicSource[] = next === 'unified' ? ['onvest', 'ontact', 'powerbi'] : [next as AtomicSource];
-    const settled = await Promise.allSettled(targets.map(target => fetchOne(target)));
-    const results = settled.map((result, index): Result => result.status === 'fulfilled' ? result.value : { source: targets[index], ok: false, configured: true, error: result.reason instanceof Error ? result.reason.message : String(result.reason) });
-    const live = { ok: results.every(result => result.ok), mode: 'advanced-performance-analytics-workbench', generatedAt: new Date().toISOString(), results };
-    setPayload(live); if (!live.ok) setError(results.filter(result => !result.ok).map(result => `${result.source}: ${result.error || 'sync failed'}`).join(' | ')); setLoading(false);
-  }
-  useEffect(() => { void load('unified'); }, []);
 
-  const results = payload?.results ?? [];
-  const selected = source === 'unified' ? undefined : results.find(result => result.source === source) ?? results[0];
-  const analytics = source === 'unified' ? merge(results) : selected?.ok ? selected.analytics ?? emptyAnalytics() : emptyAnalytics();
-  const pbi = useMemo(() => pbiCanonical(analytics.records), [analytics.records]);
-  const d = core(analytics.totals, pbi);
-  const commercial = calculateCommercialRevenue(analytics.totals, analytics.records, assumptions.acceptedFee);
+  async function load() {
+    setLoading(true);
+    setError('');
+    const sources: AtomicSource[] = ['onvest', 'ontact', 'powerbi'];
+    const settled = await Promise.allSettled(sources.map((source) => fetchSource(source)));
+    const results = settled.map((result, index): Result => result.status === 'fulfilled' ? result.value : { source: sources[index], ok: false, error: result.reason instanceof Error ? result.reason.message : String(result.reason) });
+    const nextPayload = { ok: results.every((result) => result.ok), mode: 'integrated-advanced-analytics', generatedAt: new Date().toISOString(), results };
+    setPayload(nextPayload);
+    if (!nextPayload.ok) setError(results.filter((result) => !result.ok).map((result) => `${sourceLabel(result.source)}: ${result.error ?? 'sync failed'}`).join(' | '));
+    setLoading(false);
+  }
+
+  useEffect(() => { void load(); }, []);
+
+  const merged = useMemo(() => mergeResults(payload?.results ?? []), [payload]);
+  const onvestRecords = useMemo(() => merged.records.filter((record) => record.__source === 'onvest'), [merged.records]);
+  const ontactRecords = useMemo(() => merged.records.filter((record) => record.__source === 'ontact'), [merged.records]);
+  const powerBiRecords = useMemo(() => merged.records.filter((record) => record.__source === 'powerbi'), [merged.records]);
+  const core = useMemo(() => coreMetrics(merged.totals, powerBiRecords), [merged.totals, powerBiRecords]);
+  const sourceMargins = useMemo(() => buildSourceMarginRows(merged.records), [merged.records]);
+  const marginSummary = useMemo(() => summarizeSourceMargins(sourceMargins), [sourceMargins]);
+  const propensityRows = useMemo(() => buildSourcePropensityRows(merged.records, sourceMargins), [merged.records, sourceMargins]);
+  const propensitySummary = useMemo(() => summarizePropensity(propensityRows), [propensityRows]);
+  const callSummary = useMemo(() => summarizeCallCenterEfficiency(ontactRecords), [ontactRecords]);
+  const funnelSummary = useMemo(() => summarizeFunnelLeakage(onvestRecords), [onvestRecords]);
+  const productRows = useMemo(() => buildProductPropensityRows(ontactRecords), [ontactRecords]);
+  const productSummary = useMemo(() => summarizeProductPropensity(productRows), [productRows]);
+  const commercial = useMemo(() => calculateCommercialRevenue(merged.totals, merged.records, assumptions.acceptedFee), [merged.totals, merged.records, assumptions.acceptedFee]);
   const ontactOpex = assumptions.ontactAgents * assumptions.ontactOpexPerAgent;
-  const grossProfit = commercial.totalRevenue - d.spend - ontactOpex;
-  const margin = ratio(grossProfit, commercial.totalRevenue), roi = ratio(grossProfit, d.spend + ontactOpex), breakeven = d.accepted ? (d.spend + ontactOpex - commercial.blcRevenue - commercial.mtnRevenue - commercial.mondoRevenue) / d.accepted : 0;
-  const allMetrics = useMemo(() => metrics(analytics, analytics.totals, commercial, grossProfit, pbi), [analytics, commercial, grossProfit, pbi]);
-  const filteredMetrics = allMetrics.filter(m => !metricSearch || `${m.source} ${m.metric} ${m.apiField} ${m.group}`.toLowerCase().includes(metricSearch.toLowerCase()));
-  const metricLimit = limitFor(depth);
-  const trendRows = analytics.byDate.map(r => ({ date: r.date, spend: n(r.Amount_Spent), clicks: n(r.Clicks), forms: n(r.Form_Completion), accepted: n(r.Accepted_Leads), sales: n(r.MTN_Sales), cpl: ratio(r.Amount_Spent, n(r.Form_Completion) || n(r.Fetched_Leads)) }));
-  const bySource = sourceRows(analytics.records).map(r => perf(String(r.name), r, pbi)).sort((a, b) => b.score - a.score);
-  const byVendor = analytics.byVendor.map(r => perf(String(r.vendor ?? 'Unknown'), r, pbi)).sort((a, b) => b.score - a.score);
-  const journey = journeyRows(analytics.totals, pbi), bottleneck = journey.slice(1).sort((a, b) => a.rate - b.rate)[0];
-  const health = [
-    { label: 'Media efficiency', score: avg([score(ratio(d.clicks, d.impressions), .01), score(d.cpl, 80, true), score(d.cpaAccepted, 180, true)]), detail: `${pct.format(ratio(d.clicks, d.impressions))} CTR · ${money.format(d.cpl)} CPL`, icon: BarChart3 },
-    { label: 'Lead quality', score: avg([score(ratio(d.valid, d.fetched), .85), score(ratio(d.delivered, d.valid || d.fetched), .7), score(ratio(d.accepted, d.fetched || d.delivered), .35)]), detail: `${pct.format(ratio(d.valid, d.fetched))} valid · ${pct.format(ratio(d.accepted, d.fetched || d.delivered))} accepted`, icon: ListChecks },
-    { label: 'OnTact conversion', score: avg([score(ratio(d.answered, d.dialed), .25), score(ratio(d.rpc, d.answered), .45), score(ratio(d.sales, d.rpc || d.answered), .12)]), detail: `${pct.format(ratio(d.answered, d.dialed))} answer · ${pct.format(ratio(d.rpc, d.answered))} RPC`, icon: PhoneCall },
-    { label: 'Commercial health', score: avg([score(margin, .25), score(roi, .2), score(grossProfit, 1)]), detail: `${pct.format(margin)} margin · ${pct.format(roi)} ROI`, icon: WalletCards }
-  ];
-  const sourceOptions = unique(analytics.records.map(r => String(r.offershop_source ?? '')).filter(Boolean));
-  const agentOptions = unique(analytics.records.map(r => String(r.agent ?? r.user ?? r.full_name ?? '')).filter(Boolean));
-  const statusOptions = unique(analytics.records.map(r => String(r.status ?? r.call_result ?? '')).filter(Boolean));
-  const preview = analytics.records.filter(r => { const text = Object.values(r).join(' ').toLowerCase(); return (sourceDrill === 'all' || String(r.offershop_source ?? '') === sourceDrill) && (vendorDrill === 'all' || vendor(r) === vendorDrill) && (agentDrill === 'all' || String(r.agent ?? r.user ?? r.full_name ?? '') === agentDrill) && (statusDrill === 'all' || String(r.status ?? r.call_result ?? '') === statusDrill) && (!rowSearch || text.includes(rowSearch.toLowerCase())); }).slice(0, 500);
-  const rateRows = commercial.rows.map(row => ({ ...row, rate: money.format(row.rate), revenue: money.format(row.revenue) }));
-  const filterAuditRows = results.map(result => ({ source: result.source, status: result.ok ? 'synced' : 'attention', rawRows: result.rawRows ?? result.upstreamCount ?? 0, filteredRows: result.filteredRows ?? result.rows ?? 0, previewRows: result.previewRows ?? result.analytics?.recordsReturned ?? 0, totalsUsePreviewRows: result.totalsUsePreviewRows === false ? 'No' : 'Middleware/route dependent', excludedByDate: result.excludedByDate ?? 0, undatedExcluded: result.undatedRowsExcluded ?? 0, from: result.filters?.from ?? '', to: result.filters?.to ?? '', strategy: result.filters?.strategy ?? 'source-level' }));
-  const qaRows = [
-    { check: 'Analytics depth', status: 'good' as Status, detail: `${depth} mode limits visible tables without changing calculations.` },
-    { check: 'Aggregate accuracy', status: 'good' as Status, detail: 'User row selection is removed. Preview rows are for inspection; date/API filters drive aggregate totals.' },
-    { check: 'Commercial rate card', status: 'good' as Status, detail: 'Mondo, BLC and MTN billable events are mapped to formal rates.' },
-    { check: 'BLC segment mapping', status: Object.keys(commercial.segments).length ? 'good' as Status : 'watch' as Status, detail: Object.keys(commercial.segments).length ? 'Power BI segment activations are mapped to BLC rates.' : 'No Power BI segment activation rows found; BLC revenue is held at zero.' },
-    { check: 'Accepted vs delivered', status: 'good' as Status, detail: 'Accepted leads use Accepted_Leads only; delivery metrics remain delivery stages.' }
-  ];
-  const tabs: { id: Tab; label: string }[] = [{ id: 'command', label: 'Command' }, { id: 'journey', label: 'Journey Map' }, { id: 'ontact', label: 'OnTact' }, { id: 'offernet', label: 'Offernet' }, { id: 'vendors', label: 'All Vendors' }, { id: 'pnl', label: 'Profit & Loss' }];
+  const grossProfit = commercial.totalRevenue - core.spend - ontactOpex;
+  const recommendations = useMemo(() => buildRecommendations({ marginRows: sourceMargins, propensityRows, callSummary, funnelSummary, productSummary }), [sourceMargins, propensityRows, callSummary, funnelSummary, productSummary]);
+  const limit = tableLimit(depth);
+  const trendRows = merged.byDate.map((row) => ({ date: row.date, spend: n(row.Amount_Spent), forms: n(row.Form_Completion), accepted: n(row.Accepted_Leads), sales: n(row.MTN_Sales), activations: n(row.MTN_Activated_Sales) + n(row.count_activation) }));
+  const filteredFields = merged.fieldCatalog.filter((field) => !search || `${field.source} ${field.field} ${field.group} ${field.role}`.toLowerCase().includes(search.toLowerCase())).slice(0, limit);
 
-  return <main><aside className="sidebar"><div className="brand"><div className="brand-mark">CIQ</div><div><b>ConvertIQ</b><span>Performance Analytics</span></div></div><nav>{tabs.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>{item.label}</button>)}</nav><div className="sync-panel"><ShieldCheck size={18}/><b>Advanced analytics workbench</b><span>Executive summaries, metric walls, diagnostics and preview-only row inspection.</span></div></aside><section className="workspace">
-    <header className="hero"><div><p className="eyebrow">Advanced performance intelligence · API-first · metric-complete</p><h1>ConvertIQ Performance Analytics Workbench</h1><p>Analyse the full commercial journey across paid media, lead quality, OnTact operations, vendor delivery, Power BI activations and P&L.</p></div><button className="primary" onClick={() => load()} disabled={loading}><RefreshCw size={16} className={loading ? 'spin' : ''}/>{loading ? 'Syncing' : 'Sync dashboard'}</button></header>
-    <section className="controls card"><SlidersHorizontal size={18}/><select value={source} onChange={e => { const next = e.target.value as ApiSource; setSource(next); void load(next); }}><option value="unified">Unified Dashboard</option><option value="onvest">Onvest API</option><option value="ontact">OnTact API</option><option value="powerbi">Power BI QueryData</option></select><input type="date" value={from} onChange={e => setFrom(e.target.value)}/><input type="date" value={to} onChange={e => setTo(e.target.value)}/><select value={depth} onChange={e => setDepth(e.target.value as Depth)}><option value="executive">Executive depth</option><option value="analytical">Analytical depth</option><option value="complete">Complete metric depth</option></select><div className="inline-tools"><Search size={15}/><input placeholder="Search metrics" value={metricSearch} onChange={e => setMetricSearch(e.target.value)}/></div><button onClick={() => load()}>Apply</button><span>{payload ? `Last sync: ${new Date(payload.generatedAt).toLocaleString()}` : 'Waiting for API sync'}</span></section>
-    <section className="controls card"><Filter size={18}/><select value={sourceDrill} onChange={e => setSourceDrill(e.target.value)}><option value="all">All exact sources</option>{sourceOptions.map(item => <option key={item}>{item}</option>)}</select><select value={vendorDrill} onChange={e => setVendorDrill(e.target.value)}><option value="all">All vendors</option>{['BLC','MTN','Mondo','Naga','Debt Rescue','Power BI','OnTact','Unclassified'].map(item => <option key={item}>{item}</option>)}</select><select value={agentDrill} onChange={e => setAgentDrill(e.target.value)}><option value="all">All agents</option>{agentOptions.map(item => <option key={item}>{item}</option>)}</select><select value={statusDrill} onChange={e => setStatusDrill(e.target.value)}><option value="all">All statuses</option>{statusOptions.map(item => <option key={item}>{item}</option>)}</select><div className="inline-tools"><Search size={15}/><input placeholder="Search preview rows" value={rowSearch} onChange={e => setRowSearch(e.target.value)}/></div><span>Drilldowns apply to preview/detail rows; date/API filters drive aggregate totals.</span></section>
+  const marginTableRows = sourceMargins.slice(0, limit).map((row) => ({ source: row.source, date: row.date, revenue: money.format(row.totalRevenue), spend: money.format(row.adSpend), grossProfit: money.format(row.grossProfit), margin: pct.format(row.grossMargin), roas: `${dec.format(row.roas)}x`, cpaAccepted: row.cpaAccepted ? money.format(row.cpaAccepted) : '-', band: row.profitBand }));
+  const propensityTableRows = propensityRows.slice(0, limit).map((row) => ({ source: row.source, date: row.date, score: row.score, probability: pct.format(row.probability), routing: row.routingTier, quality: dec.format(row.qualityScore), conversion: dec.format(row.conversionScore), commercial: dec.format(row.commercialScore), reason: row.reason }));
+  const qaRows = (payload?.results ?? []).map((result) => ({ source: sourceLabel(result.source), status: result.ok ? 'synced' : 'attention', rawRows: result.rawRows ?? result.upstreamCount ?? 0, filteredRows: result.filteredRows ?? result.rows ?? 0, previewRows: result.previewRows ?? result.analytics?.recordsReturned ?? 0, totalsUsePreviewRows: result.totalsUsePreviewRows === false ? 'No' : 'Route dependent', excludedByDate: result.excludedByDate ?? 0, undatedExcluded: result.undatedRowsExcluded ?? 0, strategy: result.filters?.strategy ?? 'source-level' }));
+
+  const tabs: { id: Tab; label: string }[] = [
+    { id: 'command', label: 'Command' },
+    { id: 'journey', label: 'Journey Map' },
+    { id: 'ontact', label: 'OnTact' },
+    { id: 'offernet', label: 'Offernet' },
+    { id: 'vendors', label: 'All Vendors' },
+    { id: 'pnl', label: 'Profit & Loss' },
+    { id: 'qa', label: 'QA / Trust' }
+  ];
+
+  return <main><aside className="sidebar"><div className="brand"><div className="brand-mark">CIQ</div><div><b>ConvertIQ</b><span>Advanced Analytics</span></div></div><nav>{tabs.map((item) => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>{item.label}</button>)}</nav><div className="sync-panel"><ShieldCheck size={18}/><b>One production app</b><span>Predictive routing, true margin, call efficiency, funnel leakage and product propensity are integrated into the correct tabs.</span></div></aside><section className="workspace">
+    <header className="hero"><div><p className="eyebrow">Predictive · prescriptive · API synced · no demo data</p><h1>ConvertIQ Advanced Performance Analytics</h1><p>A single operating layer for source profitability, lead propensity, OnTact efficiency, funnel leakage, product intelligence and commercial P&L.</p></div><button className="primary" onClick={() => load()} disabled={loading}><RefreshCw size={16} className={loading ? 'spin' : ''}/>{loading ? 'Syncing' : 'Sync dashboard'}</button></header>
+    <section className="controls card"><SlidersHorizontal size={18}/><input type="date" value={from} onChange={(event) => setFrom(event.target.value)}/><input type="date" value={to} onChange={(event) => setTo(event.target.value)}/><select value={depth} onChange={(event) => setDepth(event.target.value as Depth)}><option value="executive">Executive depth</option><option value="analytical">Analytical depth</option><option value="complete">Complete metric depth</option></select><div className="inline-tools"><Search size={15}/><input placeholder="Search fields / metrics" value={search} onChange={(event) => setSearch(event.target.value)}/></div><button onClick={() => load()}>Apply</button><span>{payload ? `Last sync: ${new Date(payload.generatedAt).toLocaleString()}` : 'Waiting for API sync'}</span></section>
     {error && <section className="notice">{error}</section>}
-    <section className="source-grid">{results.map(result => <section className="card source-card" key={result.source}><span className={result.ok ? 'pill ok' : 'pill warn'}>{result.ok ? 'API synced' : 'Attention'}</span><h3>{result.source.toUpperCase()}</h3><p>{num.format(result.rows ?? result.filteredRows ?? 0)} filtered rows · preview {num.format(result.previewRows ?? result.analytics?.recordsReturned ?? 0)} · {num.format(result.analytics?.fieldCatalog.length ?? 0)} parameters</p></section>)}<section className="card source-card"><span className="pill ok">Metric coverage</span><h3>{num.format(allMetrics.length)}</h3><p>{num.format(allMetrics.filter(m => m.status === 'live').length)} live · {num.format(allMetrics.filter(m => m.status === 'derived').length)} derived · {num.format(allMetrics.filter(m => m.status === 'protected').length)} protected</p></section></section>
+    <section className="source-grid">{(payload?.results ?? []).map((result) => <section className="card source-card" key={result.source}><span className={result.ok ? 'pill ok' : 'pill warn'}>{result.ok ? 'API synced' : 'Attention'}</span><h3>{sourceLabel(result.source)}</h3><p>{num.format(result.rows ?? result.filteredRows ?? 0)} filtered rows · preview {num.format(result.previewRows ?? result.analytics?.recordsReturned ?? 0)} · {num.format(result.analytics?.fieldCatalog?.length ?? 0)} fields</p></section>)}<section className="card source-card"><span className="pill ok">Advanced layers</span><h3>5/5</h3><p>{num.format(propensityRows.length)} propensity rows · {num.format(sourceMargins.length)} margin rows · {num.format(productRows.length)} products</p></section></section>
 
-    {tab === 'command' && <><section className="kpi-grid"><Card title="Total Revenue" value={money.format(commercial.totalRevenue)} sub="TP1 + BLC + MTN + Mondo" icon={WalletCards}/><Card title="Gross Profit" value={money.format(grossProfit)} sub={`${pct.format(margin)} margin · ${pct.format(roi)} ROI`} icon={TrendingUp}/><Card title="Media Spend" value={money.format(d.spend)} sub="Amount_Spent" icon={DatabaseZap}/><Card title="Fetched Leads" value={num.format(d.fetched)} sub={`${pct.format(ratio(d.valid, d.fetched))} valid`} icon={UsersRound}/><Card title="Accepted Leads" value={num.format(d.accepted)} sub={`${money.format(d.cpaAccepted)} CPA accepted`} icon={Target}/><Card title="Activations" value={num.format(d.activations)} sub="MTN + Power BI" icon={CheckCircle2}/></section><section className="grid two"><Panel title="Performance intelligence trend"><ResponsiveContainer width="100%" height={330}><AreaChart data={trendRows}><CartesianGrid vertical={false}/><XAxis dataKey="date"/><YAxis/><Tooltip/><Area dataKey="spend" name="Spend"/><Area dataKey="forms" name="Forms"/><Area dataKey="accepted" name="Accepted"/><Area dataKey="sales" name="Sales"/></AreaChart></ResponsiveContainer></Panel><Panel title="Decision health scoring"><HealthGrid items={health}/></Panel></section><section className="grid two"><Panel title="Highest leakage point"><div className="diagnostic-list"><article className="diagnostic watch"><TrendingDown size={16}/><div><b>{bottleneck?.stage ?? 'No bottleneck detected'}</b><span>{bottleneck ? `${pct.format(bottleneck.rate)} step rate · ${num.format(bottleneck.lost)} drop-off · ${bottleneck.apiField}` : 'Sync data to calculate journey leakage.'}</span></div><StatusBadge status="watch"/></article></div></Panel><Panel title="Data trust and mapping QA"><div className="diagnostic-list">{qaRows.map(item => <article className={`diagnostic ${item.status}`} key={item.check}><AlertTriangle size={16}/><div><b>{item.check}</b><span>{item.detail}</span></div><StatusBadge status={item.status}/></article>)}</div></Panel></section><Panel title="Command metric wall" action={<button className="secondary" onClick={() => csv('convertiq-command-metrics.csv', termFilter(filteredMetrics, TERMS.command, '') as unknown as Record<string, unknown>[])}><Download size={14}/>Export</button>}><MetricWall rows={termFilter(filteredMetrics, TERMS.command, '')} limit={metricLimit}/></Panel></>}
-    {tab === 'journey' && <><section className="grid two"><Panel title="Full journey map"><ResponsiveContainer width="100%" height={500}><FunnelChart><Tooltip/><Funnel dataKey="value" data={journey}><LabelList position="right" fill="#17202a" stroke="none" dataKey="stage"/></Funnel></FunnelChart></ResponsiveContainer></Panel><Panel title="Journey diagnostics"><Table rows={journey.map(row => ({ stage: row.stage, apiField: row.apiField, owner: row.owner, value: num.format(row.value), stepRate: pct.format(row.rate), lost: num.format(row.lost), costPerStage: money.format(row.costPerStage) }))}/></Panel></section><Panel title="Journey metric wall"><MetricWall rows={termFilter(filteredMetrics, TERMS.journey, '')} limit={metricLimit}/></Panel></>}
-    {tab === 'ontact' && <><section className="kpi-grid"><Card title="Call Records" value={num.format(d.calls)} sub="OnTact / call rows" icon={PhoneCall}/><Card title="Talk Time" value={`${dec.format(d.talkSeconds / 3600)}h`} sub="length_in_sec" icon={Gauge}/><Card title="Dialled" value={num.format(d.dialed)} sub="MTN_Dialed_Leads" icon={PhoneCall}/><Card title="Answered" value={num.format(d.answered)} sub={`${pct.format(ratio(d.answered, d.dialed))} answer rate`} icon={CheckCircle2}/><Card title="RPC" value={num.format(d.rpc)} sub={`${pct.format(ratio(d.rpc, d.answered))} RPC rate`} icon={Target}/><Card title="Sales" value={num.format(d.sales)} sub={`${pct.format(ratio(d.sales, d.rpc || d.answered))} conversion`} icon={TrendingUp}/></section><section className="grid two"><Panel title="Agent productivity"><Table rows={analytics.byAgent.slice(0, metricLimit)}/></Panel><Panel title="Outcome and status mix"><ResponsiveContainer width="100%" height={360}><BarChart data={analytics.byStatus.slice(0, 24)}><CartesianGrid vertical={false}/><XAxis dataKey="status"/><YAxis/><Tooltip/><Bar dataKey="records" name="Records"/><Bar dataKey="MTN_Sales" name="Sales"/></BarChart></ResponsiveContainer></Panel></section><Panel title="OnTact metric wall"><MetricWall rows={termFilter(filteredMetrics, TERMS.ontact, '')} limit={metricLimit}/></Panel><Panel title="OnTact preview row explorer"><Table rows={preview}/></Panel></>}
-    {tab === 'offernet' && <><section className="kpi-grid"><Card title="Spend" value={money.format(d.spend)} sub="Amount_Spent" icon={DatabaseZap}/><Card title="Impressions" value={num.format(d.impressions)} sub="Paid delivery" icon={Layers3}/><Card title="Clicks" value={num.format(d.clicks)} sub={`${pct.format(ratio(d.clicks, d.impressions))} CTR`} icon={BarChart3}/><Card title="Landing Views" value={num.format(d.lpv)} sub="Landing_Page_View" icon={LineIcon}/><Card title="Forms" value={num.format(d.forms)} sub={`${money.format(d.cpl)} CPL`} icon={ListChecks}/><Card title="Accepted CPA" value={money.format(d.cpaAccepted)} sub="Spend ÷ Accepted_Leads" icon={Gauge}/></section><section className="grid two"><Panel title="Paid media efficiency trend"><ResponsiveContainer width="100%" height={360}><LineChart data={trendRows}><CartesianGrid vertical={false}/><XAxis dataKey="date"/><YAxis/><Tooltip/><Line dataKey="spend"/><Line dataKey="clicks"/><Line dataKey="forms"/><Line dataKey="cpl"/></LineChart></ResponsiveContainer></Panel><Panel title="Exact source performance"><ResponsiveContainer width="100%" height={360}><BarChart data={bySource.slice(0, 16)}><CartesianGrid vertical={false}/><XAxis dataKey="name"/><YAxis/><Tooltip/><Bar dataKey="spend"/><Bar dataKey="fetched"/><Bar dataKey="accepted"/></BarChart></ResponsiveContainer></Panel></section><Panel title="Offernet source matrix"><Table rows={bySource.slice(0, metricLimit).map(row => ({ source: row.name, score: dec.format(row.score), spend: money.format(row.spend), fetched: num.format(row.fetched), validRate: pct.format(row.validationRate), accepted: num.format(row.accepted), cpl: money.format(row.cpl), cpaAccepted: row.cpaAccepted ? money.format(row.cpaAccepted) : '-' }))}/></Panel><Panel title="Offernet metric wall"><MetricWall rows={termFilter(filteredMetrics, TERMS.offernet, '')} limit={metricLimit}/></Panel></>}
-    {tab === 'vendors' && <><section className="kpi-grid"><Card title="BLC Revenue" value={money.format(commercial.blcRevenue)} sub="Power BI segment rates" icon={Layers3}/><Card title="MTN Revenue" value={money.format(commercial.mtnRevenue)} sub="Activated sales × R200" icon={CheckCircle2}/><Card title="Mondo Revenue" value={money.format(commercial.mondoRevenue)} sub="Sold A/B/C/D" icon={BarChart3}/><Card title="Delivered OnTact" value={num.format(n(analytics.totals.Total_Leads_Delivered_OnTact))} sub="BLC / OnTact delivery" icon={UsersRound}/><Card title="MTN Sales" value={num.format(n(analytics.totals.MTN_Sales))} sub="MTN sales" icon={Target}/><Card title="Power BI Activations" value={num.format(pbi.activations)} sub="Canonical activations" icon={ListChecks}/></section><section className="grid two"><Panel title="Vendor composition"><ResponsiveContainer width="100%" height={360}><BarChart data={byVendor.slice(0, 16)}><CartesianGrid vertical={false}/><XAxis dataKey="name"/><YAxis/><Tooltip/><Bar dataKey="fetched"/><Bar dataKey="accepted"/><Bar dataKey="sales"/><Bar dataKey="activations"/></BarChart></ResponsiveContainer></Panel><Panel title="Vendor operational matrix"><Table rows={[{ vendor: 'BLC / OnTact', passedVetting: analytics.totals.Total_Leads_Passed_BLC_Vetting ?? 0, dedupePassed: analytics.totals.Total_Leads_Dedupe_Passed_BLC ?? 0, delivered: analytics.totals.Total_Leads_Delivered_OnTact ?? 0, revenue: money.format(commercial.blcRevenue) }, { vendor: 'MTN', delivered: analytics.totals.Total_Leads_Delivered_MTN ?? 0, dialed: analytics.totals.MTN_Dialed_Leads ?? 0, answered: analytics.totals.MTN_Answered_Calls ?? 0, rpc: analytics.totals.MTN_Right_Party_Contact ?? 0, sales: analytics.totals.MTN_Sales ?? 0, activated: analytics.totals.MTN_Activated_Sales ?? 0, revenue: money.format(commercial.mtnRevenue) }, { vendor: 'Mondo', gradePassed: analytics.totals.Total_Mondo_Grade_Passed_Lead ?? 0, delivered: analytics.totals.Total_Leads_Delivered_Mondo ?? 0, soldA: analytics.totals.Total_Leads_Sold_A ?? 0, soldB: analytics.totals.Total_Leads_Sold_B ?? 0, soldC: analytics.totals.Total_Leads_Sold_C ?? 0, soldD: analytics.totals.Total_Leads_Sold_D ?? 0, revenue: money.format(commercial.mondoRevenue) }, { vendor: 'Naga', processed: analytics.totals.Naga_Processed ?? 0, ftpDropped: analytics.totals.Naga_FileDroppedOnFTP ?? 0 }, { vendor: 'Debt Rescue', processed: analytics.totals.DebtRescua_Processed ?? 0, delivered: analytics.totals.DebtRescue_LeadDelivered ?? 0 }]}/></Panel></section><Panel title="BLC Power BI activation segments"><Table rows={Object.entries(RATE_CARD.blc).map(([segment, config]) => ({ segment, activations: commercial.segments[segment as keyof typeof commercial.segments] ?? 0, rate: money.format(config.rate), revenue: money.format((commercial.segments[segment as keyof typeof commercial.segments] ?? 0) * config.rate) }))}/></Panel><Panel title="Vendor metric wall"><MetricWall rows={termFilter(filteredMetrics, TERMS.vendors, '')} limit={metricLimit}/></Panel></>}
-    {tab === 'pnl' && <><section className="assumptions card"><AssumptionInput label="TP1 accepted fee" value={assumptions.acceptedFee} onChange={value => setAssumptions({ ...assumptions, acceptedFee: value })}/><AssumptionInput label="OnTact agents" value={assumptions.ontactAgents} onChange={value => setAssumptions({ ...assumptions, ontactAgents: value })}/><AssumptionInput label="Opex / agent" value={assumptions.ontactOpexPerAgent} onChange={value => setAssumptions({ ...assumptions, ontactOpexPerAgent: value })}/></section><section className="kpi-grid"><Card title="Total Revenue" value={money.format(commercial.totalRevenue)} sub="TP1 + BLC + MTN + Mondo" icon={WalletCards}/><Card title="Accepted Revenue" value={money.format(commercial.acceptedRevenue)} sub={`${num.format(d.accepted)} accepted`} icon={Target}/><Card title="BLC Revenue" value={money.format(commercial.blcRevenue)} sub="Segment weighted" icon={Layers3}/><Card title="Mondo Revenue" value={money.format(commercial.mondoRevenue)} sub="Class rate card" icon={BarChart3}/><Card title="MTN Revenue" value={money.format(commercial.mtnRevenue)} sub="Activation rate card" icon={CheckCircle2}/><Card title="Gross Profit" value={money.format(grossProfit)} sub={`${pct.format(margin)} margin · ${pct.format(roi)} ROI`} icon={TrendingUp}/></section><section className="grid two"><Panel title="P&L waterfall"><ResponsiveContainer width="100%" height={360}><BarChart data={[{ line: 'Accepted Rev', value: commercial.acceptedRevenue }, { line: 'BLC Rev', value: commercial.blcRevenue }, { line: 'MTN Rev', value: commercial.mtnRevenue }, { line: 'Mondo Rev', value: commercial.mondoRevenue }, { line: 'Media Spend', value: -d.spend }, { line: 'OnTact Opex', value: -ontactOpex }, { line: 'Gross Profit', value: grossProfit }]}><CartesianGrid vertical={false}/><XAxis dataKey="line"/><YAxis/><Tooltip/><Bar dataKey="value"/></BarChart></ResponsiveContainer></Panel><Panel title="P&L summary"><Table rows={[{ line: 'Total revenue', value: money.format(commercial.totalRevenue) }, { line: 'Media spend', value: money.format(d.spend) }, { line: 'OnTact fixed Opex', value: money.format(ontactOpex) }, { line: 'Gross profit', value: money.format(grossProfit) }, { line: 'Gross margin', value: pct.format(margin) }, { line: 'ROI', value: pct.format(roi) }, { line: 'Break-even TP1 accepted fee', value: money.format(breakeven) }]}/></Panel></section><Panel title="Commercial rate-card breakdown"><Table rows={rateRows}/></Panel><Panel title="P&L QA and filter audit"><div className="diagnostic-list">{qaRows.map(item => <article className={`diagnostic ${item.status}`} key={item.check}><ShieldCheck size={16}/><div><b>{item.check}</b><span>{item.detail}</span></div><StatusBadge status={item.status}/></article>)}</div><Table rows={filterAuditRows}/></Panel><Panel title="P&L metric wall"><MetricWall rows={termFilter(filteredMetrics, TERMS.pnl, '')} limit={metricLimit}/></Panel></>}
+    {tab === 'command' && <><section className="kpi-grid"><Card title="Total Revenue" value={money.format(commercial.totalRevenue)} sub="TP1 + BLC + MTN + Mondo" icon={WalletCards}/><Card title="True Source ROAS" value={`${dec.format(marginSummary.roas)}x`} sub={`${pct.format(marginSummary.grossMargin)} source margin`} icon={TrendingUp}/><Card title="Avg Propensity" value={dec.format(propensitySummary.avgScore)} sub={`${num.format(propensitySummary.scaleNow)} scale now · ${num.format(propensitySummary.priority)} priority`} icon={Target}/><Card title="Funnel Conversion" value={pct.format(funnelSummary.overallConversionRate)} sub={funnelSummary.highestLeakageStage} icon={Filter}/><Card title="OnTact Conversion" value={pct.format(callSummary.conversionRate)} sub={`${callSummary.optimalBucket} optimal call duration`} icon={PhoneCall}/><Card title="Best Product" value={String(productSummary.bestProductScore)} sub={productSummary.bestProduct} icon={Layers3}/></section><section className="grid two"><Panel title="Executive performance trend" sub="Spend, forms, accepted leads, sales and activations over time"><ResponsiveContainer width="100%" height={340}><AreaChart data={trendRows}><CartesianGrid vertical={false}/><XAxis dataKey="date"/><YAxis/><Tooltip/><Area dataKey="spend" name="Spend"/><Area dataKey="forms" name="Forms"/><Area dataKey="accepted" name="Accepted"/><Area dataKey="sales" name="Sales"/><Area dataKey="activations" name="Activations"/></AreaChart></ResponsiveContainer></Panel><Panel title="Prescriptive recommendations" sub="Actions generated from margin, propensity, call-efficiency, funnel leakage and product signals"><div className="diagnostic-list">{recommendations.map((item, index) => <article className={`diagnostic ${item.priority === 'High' ? 'critical' : item.priority === 'Medium' ? 'watch' : 'good'}`} key={`${item.area}-${index}`}><AlertTriangle size={16}/><div><b>{item.action}</b><span>{item.area}: {item.reason}</span></div><strong>{item.priority}</strong></article>)}</div></Panel></section><section className="grid two"><Panel title="Predictive source routing"><Table rows={propensityTableRows}/></Panel><Panel title="True margin by source"><ResponsiveContainer width="100%" height={360}><BarChart data={sourceMargins.slice(0, 18)}><CartesianGrid vertical={false}/><XAxis dataKey="source"/><YAxis/><Tooltip/><Bar dataKey="totalRevenue" name="Revenue"/><Bar dataKey="adSpend" name="Spend"/><Bar dataKey="grossProfit" name="Gross Profit"/></BarChart></ResponsiveContainer></Panel></section></>}
+
+    {tab === 'journey' && <><FunnelLeakagePanel records={onvestRecords} limit={limit}/><Panel title="Journey trend" sub="Source pipeline volumes over time"><ResponsiveContainer width="100%" height={360}><LineChart data={trendRows}><CartesianGrid vertical={false}/><XAxis dataKey="date"/><YAxis/><Tooltip/><Line dataKey="forms"/><Line dataKey="accepted"/><Line dataKey="sales"/><Line dataKey="activations"/></LineChart></ResponsiveContainer></Panel></>}
+
+    {tab === 'ontact' && <><section className="kpi-grid"><Card title="Dialled" value={num.format(core.dialed)} sub="MTN_Dialed_Leads" icon={PhoneCall}/><Card title="Answered" value={num.format(core.answered)} sub={`${pct.format(ratio(core.answered, core.dialed))} answer rate`} icon={CheckCircle2}/><Card title="RPC" value={num.format(core.rpc)} sub={`${pct.format(ratio(core.rpc, core.answered))} RPC rate`} icon={Target}/><Card title="Sales" value={num.format(core.sales)} sub={`${pct.format(ratio(core.sales, core.rpc || core.answered))} conversion`} icon={TrendingUp}/></section><CallCenterEfficiencyPanel records={ontactRecords} limit={limit}/><ProductPropensityPanel records={ontactRecords} limit={limit}/><section className="grid two"><Panel title="Agent productivity"><Table rows={merged.byAgent.slice(0, limit)}/></Panel><Panel title="Status mix"><Table rows={merged.byStatus.slice(0, limit)}/></Panel></section></>}
+
+    {tab === 'offernet' && <><section className="kpi-grid"><Card title="Spend" value={money.format(core.spend)} sub="Amount_Spent" icon={DatabaseZap}/><Card title="CPL" value={money.format(core.cpl)} sub="Spend ÷ forms/fetched" icon={Gauge}/><Card title="CPA Accepted" value={money.format(core.cpaAccepted)} sub="Spend ÷ Accepted_Leads" icon={Target}/><Card title="Best Source" value={marginSummary.bestSource.slice(0, 22)} sub="Highest gross profit" icon={TrendingUp}/><Card title="Priority Sources" value={num.format(propensitySummary.scaleNow + propensitySummary.priority)} sub="Propensity score ≥ 70" icon={UsersRound}/><Card title="Loss Sources" value={num.format(marginSummary.lossMakingSources)} sub={marginSummary.worstSource} icon={AlertTriangle}/></section><section className="grid two"><Panel title="Paid media efficiency trend"><ResponsiveContainer width="100%" height={360}><LineChart data={trendRows}><CartesianGrid vertical={false}/><XAxis dataKey="date"/><YAxis/><Tooltip/><Line dataKey="spend"/><Line dataKey="forms"/><Line dataKey="accepted"/></LineChart></ResponsiveContainer></Panel><Panel title="True margin matrix" action={<button className="secondary" onClick={() => csv('convertiq-source-margin.csv', marginTableRows as unknown as Record<string, unknown>[])}><Download size={14}/>Export</button>}><Table rows={marginTableRows}/></Panel></section><Panel title="Predictive source routing"><Table rows={propensityTableRows}/></Panel></>}
+
+    {tab === 'vendors' && <><section className="kpi-grid"><Card title="Mondo Revenue" value={money.format(commercial.mondoRevenue)} sub="Sold A/B/C/D rate card" icon={BarChart3}/><Card title="MTN Revenue" value={money.format(commercial.mtnRevenue)} sub="Activated sales × R200" icon={CheckCircle2}/><Card title="BLC Revenue" value={money.format(commercial.blcRevenue)} sub="Power BI segment activations" icon={Layers3}/><Card title="Products Scored" value={num.format(productSummary.totalProducts)} sub={`${num.format(productSummary.scaleProducts)} scale products`} icon={Target}/></section><ProductPropensityPanel records={ontactRecords} limit={limit}/><Panel title="Vendor source composition"><Table rows={merged.byVendor.slice(0, limit)}/></Panel></>}
+
+    {tab === 'pnl' && <><section className="assumptions card"><AssumptionInput label="TP1 accepted fee" value={assumptions.acceptedFee} onChange={(value) => setAssumptions({ ...assumptions, acceptedFee: value })}/><AssumptionInput label="OnTact agents" value={assumptions.ontactAgents} onChange={(value) => setAssumptions({ ...assumptions, ontactAgents: value })}/><AssumptionInput label="Opex / agent" value={assumptions.ontactOpexPerAgent} onChange={(value) => setAssumptions({ ...assumptions, ontactOpexPerAgent: value })}/></section><section className="kpi-grid"><Card title="Revenue" value={money.format(commercial.totalRevenue)} sub="Total commercial revenue" icon={WalletCards}/><Card title="Gross Profit" value={money.format(grossProfit)} sub={`${pct.format(ratio(grossProfit, commercial.totalRevenue))} margin`} icon={TrendingUp}/><Card title="Media Spend" value={money.format(core.spend)} sub="Amount_Spent" icon={DatabaseZap}/><Card title="OnTact Opex" value={money.format(ontactOpex)} sub="Input assumption" icon={PhoneCall}/></section><section className="grid two"><Panel title="P&L waterfall"><ResponsiveContainer width="100%" height={360}><BarChart data={[{ line: 'Accepted Rev', value: commercial.acceptedRevenue }, { line: 'BLC Rev', value: commercial.blcRevenue }, { line: 'MTN Rev', value: commercial.mtnRevenue }, { line: 'Mondo Rev', value: commercial.mondoRevenue }, { line: 'Media Spend', value: -core.spend }, { line: 'OnTact Opex', value: -ontactOpex }, { line: 'Gross Profit', value: grossProfit }]}><CartesianGrid vertical={false}/><XAxis dataKey="line"/><YAxis/><Tooltip/><Bar dataKey="value"/></BarChart></ResponsiveContainer></Panel><Panel title="Source margin leaderboard"><Table rows={marginTableRows}/></Panel></section><Panel title="Commercial rate-card breakdown"><Table rows={commercial.rows.map((row) => ({ ...row, rate: money.format(row.rate), revenue: money.format(row.revenue) }))}/></Panel></>}
+
+    {tab === 'qa' && <><section className="kpi-grid"><Card title="Live Records" value={num.format(merged.records.length)} sub="Combined preview records" icon={DatabaseZap}/><Card title="API Fields" value={num.format(merged.fieldCatalog.length)} sub="Available metric catalogue" icon={ListChecks}/><Card title="Source Margin Rows" value={num.format(sourceMargins.length)} sub="Feature 2" icon={WalletCards}/><Card title="Propensity Rows" value={num.format(propensityRows.length)} sub="Feature 1" icon={Target}/></section><Panel title="API sync and filter audit"><Table rows={qaRows}/></Panel><Panel title="Metric catalogue"><Table rows={filteredFields.map((field) => ({ source: field.source, field: field.rawField ?? field.field, group: field.group, role: field.role, status: field.pii ? 'protected' : 'available', nonNull: field.nonNull ?? 0, total: field.total ?? '' }))}/></Panel></>}
   </section></main>;
 }
