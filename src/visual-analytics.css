@@ -1,0 +1,273 @@
+/* ConvertIQ Advanced Visual Analytics Layer */
+
+:root {
+  --chart-1: #0f766e;
+  --chart-2: #2563eb;
+  --chart-3: #12abc8;
+  --chart-4: #d97706;
+  --chart-5: #7c3aed;
+  --chart-6: #16a34a;
+  --chart-red: #b42318;
+  --chart-grid: rgba(100, 116, 139, 0.18);
+  --chart-axis: #64748b;
+  --chart-panel: linear-gradient(180deg, rgba(255,255,255,.98), rgba(248,251,253,.96));
+}
+
+/* Overall app polish */
+.workspace {
+  background:
+    radial-gradient(circle at 88% 2%, rgba(37, 99, 235, 0.075), transparent 25%),
+    radial-gradient(circle at 5% 8%, rgba(15, 118, 110, 0.10), transparent 24%);
+}
+
+.hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: 28px;
+}
+
+.hero::after {
+  content: '';
+  position: absolute;
+  right: -90px;
+  top: -90px;
+  width: 260px;
+  height: 260px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(18,171,200,.20), transparent 66%);
+  pointer-events: none;
+}
+
+.hero h1 {
+  max-width: 1080px;
+}
+
+/* KPI hierarchy */
+.stat {
+  isolation: isolate;
+  border-radius: 22px;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.98), rgba(249,252,253,.96)),
+    radial-gradient(circle at top right, rgba(18,171,200,.10), transparent 46%);
+}
+
+.stat::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(15,118,110,.06), rgba(37,99,235,.035));
+  z-index: -1;
+}
+
+.stat strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.stat:hover,
+.panel:hover,
+.source-card:hover,
+.metric-tile:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-strong);
+}
+
+.stat,
+.panel,
+.source-card,
+.metric-tile {
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+
+/* Chart panel framing */
+.panel:has(.recharts-responsive-container) {
+  background: var(--chart-panel);
+  border-radius: 24px;
+  border-color: rgba(15, 23, 42, 0.10);
+}
+
+.panel:has(.recharts-responsive-container) .panel-head {
+  margin-bottom: 18px;
+}
+
+.recharts-responsive-container {
+  min-height: 280px;
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.74), rgba(248,250,252,.78)),
+    radial-gradient(circle at top left, rgba(15,118,110,.08), transparent 38%);
+  border: 1px solid rgba(15, 23, 42, 0.055);
+  padding: 8px;
+}
+
+/* Axis, grid and labels */
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: var(--chart-grid) !important;
+  stroke-dasharray: 3 6;
+}
+
+.recharts-cartesian-axis-line,
+.recharts-cartesian-axis-tick-line {
+  stroke: rgba(100, 116, 139, 0.25) !important;
+}
+
+.recharts-cartesian-axis-tick-value,
+.recharts-text,
+.recharts-label {
+  fill: var(--chart-axis) !important;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.recharts-yAxis .recharts-cartesian-axis-tick-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Lines and areas */
+.recharts-line-curve {
+  stroke-width: 3.25px !important;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 5px 8px rgba(15, 23, 42, 0.12));
+}
+
+.recharts-line:nth-of-type(1) .recharts-line-curve { stroke: var(--chart-1) !important; }
+.recharts-line:nth-of-type(2) .recharts-line-curve { stroke: var(--chart-2) !important; }
+.recharts-line:nth-of-type(3) .recharts-line-curve { stroke: var(--chart-3) !important; }
+.recharts-line:nth-of-type(4) .recharts-line-curve { stroke: var(--chart-4) !important; }
+.recharts-line:nth-of-type(5) .recharts-line-curve { stroke: var(--chart-5) !important; }
+
+.recharts-line-dot,
+.recharts-line-active-dot {
+  stroke-width: 2px !important;
+  filter: drop-shadow(0 4px 8px rgba(15, 23, 42, 0.18));
+}
+
+.recharts-area-curve {
+  stroke-width: 2.7px !important;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.recharts-area:nth-of-type(1) .recharts-area-curve { stroke: var(--chart-1) !important; }
+.recharts-area:nth-of-type(2) .recharts-area-curve { stroke: var(--chart-2) !important; }
+.recharts-area:nth-of-type(3) .recharts-area-curve { stroke: var(--chart-3) !important; }
+.recharts-area:nth-of-type(4) .recharts-area-curve { stroke: var(--chart-4) !important; }
+
+.recharts-area-area {
+  fill-opacity: .17 !important;
+}
+
+.recharts-area:nth-of-type(1) .recharts-area-area { fill: var(--chart-1) !important; }
+.recharts-area:nth-of-type(2) .recharts-area-area { fill: var(--chart-2) !important; }
+.recharts-area:nth-of-type(3) .recharts-area-area { fill: var(--chart-3) !important; }
+.recharts-area:nth-of-type(4) .recharts-area-area { fill: var(--chart-4) !important; }
+
+/* Bars */
+.recharts-bar-rectangle path,
+.recharts-rectangle {
+  rx: 7px;
+  ry: 7px;
+}
+
+.recharts-bar:nth-of-type(1) .recharts-rectangle { fill: var(--chart-1) !important; }
+.recharts-bar:nth-of-type(2) .recharts-rectangle { fill: var(--chart-2) !important; }
+.recharts-bar:nth-of-type(3) .recharts-rectangle { fill: var(--chart-3) !important; }
+.recharts-bar:nth-of-type(4) .recharts-rectangle { fill: var(--chart-4) !important; }
+.recharts-bar:nth-of-type(5) .recharts-rectangle { fill: var(--chart-5) !important; }
+
+.recharts-bar-rectangle:hover path,
+.recharts-rectangle:hover {
+  filter: brightness(1.04) drop-shadow(0 8px 12px rgba(15,23,42,.14));
+}
+
+/* Funnel */
+.recharts-funnel-trapezoid path {
+  stroke: rgba(255,255,255,.72) !important;
+  stroke-width: 2px;
+  filter: drop-shadow(0 8px 14px rgba(15, 23, 42, 0.10));
+}
+
+.recharts-funnel-trapezoid:nth-of-type(6n+1) path { fill: var(--chart-1) !important; }
+.recharts-funnel-trapezoid:nth-of-type(6n+2) path { fill: var(--chart-2) !important; }
+.recharts-funnel-trapezoid:nth-of-type(6n+3) path { fill: var(--chart-3) !important; }
+.recharts-funnel-trapezoid:nth-of-type(6n+4) path { fill: var(--chart-4) !important; }
+.recharts-funnel-trapezoid:nth-of-type(6n+5) path { fill: var(--chart-5) !important; }
+.recharts-funnel-trapezoid:nth-of-type(6n+6) path { fill: var(--chart-6) !important; }
+
+/* Tooltip */
+.recharts-tooltip-wrapper {
+  z-index: 20;
+  filter: drop-shadow(0 16px 28px rgba(15, 23, 42, 0.18));
+}
+
+.recharts-default-tooltip {
+  border: 1px solid rgba(15, 23, 42, 0.10) !important;
+  border-radius: 14px !important;
+  background: rgba(255, 255, 255, 0.96) !important;
+  box-shadow: 0 18px 44px rgba(15,23,42,.12) !important;
+  padding: 10px 12px !important;
+}
+
+.recharts-tooltip-label {
+  color: #0f172a !important;
+  font-weight: 850 !important;
+  margin-bottom: 6px !important;
+}
+
+.recharts-tooltip-item {
+  font-weight: 700 !important;
+  font-size: 12px !important;
+}
+
+/* Metric walls: make deep analytics easier to scan */
+.metric-wall {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(15,118,110,.35) transparent;
+}
+
+.metric-tile {
+  border-radius: 22px;
+}
+
+.metric-tile strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-tile header span:first-child {
+  max-width: 70%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tables */
+.table-wrap {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(15,118,110,.35) transparent;
+}
+
+tbody tr:nth-child(even) {
+  background: rgba(248, 250, 252, .55);
+}
+
+/* Source cards */
+.source-card h3 {
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Better mobile chart behaviour */
+@media (max-width: 760px) {
+  .recharts-responsive-container {
+    min-height: 320px;
+    padding: 4px;
+  }
+
+  .recharts-cartesian-axis-tick-value,
+  .recharts-text,
+  .recharts-label {
+    font-size: 10px;
+  }
+}
