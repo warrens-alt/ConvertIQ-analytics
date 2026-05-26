@@ -1,0 +1,230 @@
+/* ConvertIQ Analytics Experience Optimisation Layer */
+
+:root {
+  --focus-ring: 0 0 0 4px rgba(15, 118, 110, 0.12);
+  --panel-glow: 0 24px 70px rgba(15, 23, 42, 0.11);
+  --surface-blur: saturate(140%) blur(16px);
+}
+
+/* Keep analytical controls usable while scrolling deep dashboards */
+.workspace > .controls:first-of-type {
+  position: sticky;
+  top: 14px;
+  z-index: 15;
+  backdrop-filter: var(--surface-blur);
+  background: rgba(255, 255, 255, 0.88);
+  border-color: rgba(15, 118, 110, 0.16);
+}
+
+.workspace > .controls:nth-of-type(2) {
+  background: linear-gradient(135deg, rgba(255,255,255,.92), rgba(244,250,249,.88));
+  border-color: rgba(15, 118, 110, 0.12);
+}
+
+.controls select,
+.controls input {
+  min-width: 150px;
+}
+
+.controls .inline-tools input {
+  min-width: 260px;
+}
+
+.controls button {
+  min-height: 42px;
+}
+
+/* Stronger section rhythm */
+.kpi-grid + .grid,
+.grid + .grid,
+.grid + .panel,
+.panel + .grid {
+  margin-top: 16px;
+}
+
+.panel {
+  position: relative;
+}
+
+.panel::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  border-radius: 18px 18px 0 0;
+  background: linear-gradient(90deg, rgba(15,118,110,.58), rgba(37,99,235,.30), rgba(18,171,200,.40));
+  opacity: .62;
+  pointer-events: none;
+}
+
+.panel:has(.recharts-responsive-container)::before {
+  opacity: .9;
+}
+
+/* Chart containers: more consistent height and clearer data space */
+.panel:has(.recharts-responsive-container) {
+  min-height: 430px;
+}
+
+.panel:has(.recharts-responsive-container) .recharts-wrapper {
+  margin: 0 auto;
+}
+
+.recharts-responsive-container svg {
+  overflow: visible;
+}
+
+.recharts-surface {
+  overflow: visible;
+}
+
+.recharts-cartesian-axis-ticks text {
+  paint-order: stroke;
+  stroke: rgba(255,255,255,.82);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.recharts-legend-wrapper {
+  color: #475569 !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+}
+
+/* Make line/area comparisons feel more analytical */
+.recharts-line,
+.recharts-area,
+.recharts-bar {
+  transition: opacity .18s ease, filter .18s ease;
+}
+
+.recharts-wrapper:hover .recharts-line,
+.recharts-wrapper:hover .recharts-area,
+.recharts-wrapper:hover .recharts-bar {
+  opacity: .88;
+}
+
+.recharts-wrapper .recharts-line:hover,
+.recharts-wrapper .recharts-area:hover,
+.recharts-wrapper .recharts-bar:hover {
+  opacity: 1;
+  filter: drop-shadow(0 12px 18px rgba(15, 23, 42, .15));
+}
+
+/* Better diagnostics: scores should read like gauges */
+.diagnostic > strong {
+  min-width: 54px;
+  text-align: center;
+  padding: 7px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.72);
+  border: 1px solid rgba(15,23,42,.08);
+  font-variant-numeric: tabular-nums;
+}
+
+.diagnostic.excellent > strong {
+  color: #0f766e;
+  background: #e7f6f2;
+}
+
+.diagnostic.good > strong {
+  color: #1d4ed8;
+  background: #eaf1ff;
+}
+
+.diagnostic.watch > strong {
+  color: #a45a00;
+  background: #fff5df;
+}
+
+.diagnostic.critical > strong {
+  color: #b42318;
+  background: #ffe9e9;
+}
+
+/* Metric walls: compact enough for complete mode, readable enough for exec mode */
+.metric-wall {
+  grid-auto-rows: minmax(172px, auto);
+  padding-right: 8px;
+}
+
+.metric-tile {
+  position: relative;
+  overflow: hidden;
+}
+
+.metric-tile::after {
+  content: '';
+  position: absolute;
+  right: -28px;
+  bottom: -34px;
+  width: 90px;
+  height: 90px;
+  border-radius: 999px;
+  background: rgba(15,118,110,.045);
+  pointer-events: none;
+}
+
+.metric-tile.derived::after {
+  background: rgba(37,99,235,.06);
+}
+
+.metric-tile.protected::after {
+  background: rgba(100,116,139,.07);
+}
+
+.metric-tile h3 {
+  min-height: 36px;
+}
+
+.metric-tile footer span {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Tables: make dense data feel more like BI */
+.table-wrap {
+  box-shadow: inset 0 1px rgba(255,255,255,.65);
+}
+
+td,
+th {
+  font-variant-numeric: tabular-nums;
+}
+
+tbody tr:hover td {
+  color: #071526;
+}
+
+/* Better primary action placement */
+.hero .primary {
+  align-self: flex-start;
+  box-shadow: 0 18px 36px rgba(15, 118, 110, 0.24);
+}
+
+/* Mobile and tablet improvements */
+@media (max-width: 1180px) {
+  .workspace > .controls:first-of-type {
+    position: static;
+  }
+
+  .panel:has(.recharts-responsive-container) {
+    min-height: 390px;
+  }
+}
+
+@media (max-width: 760px) {
+  .panel:has(.recharts-responsive-container) {
+    min-height: 420px;
+  }
+
+  .controls::before {
+    width: 100%;
+  }
+
+  .metric-tile h3 {
+    min-height: auto;
+  }
+}
