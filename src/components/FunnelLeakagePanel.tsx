@@ -10,11 +10,13 @@ type Props = {
 type StageMetric = {
   label: string;
   aliases: string[];
+  queryHints?: string[];
 };
 
 type TransitionMetric = {
   key: string;
   label: string;
+  group: 'Lead + validation funnel' | 'MTN conversion funnel' | 'Power BI / ONtact-BLC commercial funnel';
   from: StageMetric;
   to: StageMetric;
 };
@@ -23,7 +25,7 @@ const num = new Intl.NumberFormat('en-ZA', { maximumFractionDigits: 0 });
 const money = new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR', maximumFractionDigits: 0 });
 const pct = new Intl.NumberFormat('en-ZA', { style: 'percent', maximumFractionDigits: 1 });
 
-const STAGE_METRICS: StageMetric[] = [
+const CORE_STAGES: StageMetric[] = [
   { label: 'Leads', aliases: ['Fetched_Leads', 'Leads', 'Total_Leads', 'Total_Leads_Fetched'] },
   { label: 'Standardised ID', aliases: ['Standardised_ID_Number', 'Standardised_ID', 'Standardized_ID_Number', 'Standardized_ID'] },
   { label: 'Standardised Phone', aliases: ['Standardised_Phone_Number', 'Standardised_Phone', 'Standardized_Phone_Number', 'Standardized_Phone'] },
@@ -41,17 +43,55 @@ const STAGE_METRICS: StageMetric[] = [
   { label: 'MTN Activations', aliases: ['MTN_Activated_Sales', 'MTN_Activations', 'MTN_Activated', 'MTN_Total_Activations'] }
 ];
 
-const TRANSITIONS: TransitionMetric[] = STAGE_METRICS.slice(0, -1).map((from, index) => {
-  const to = STAGE_METRICS[index + 1];
+const COMMERCIAL_STAGES = {
+  delivered: CORE_STAGES[8],
+  blcSales: {
+    label: 'ONtact/BLC Sales',
+    aliases: ['BLC_Sales', 'Ontact_BLC_Sales', 'ONtact_BLC_Sales', 'Total_BLC_Sales', 'BLC_Total_Sales', 'count_sale', 'count_sales', 'sales_count'],
+    queryHints: ['sale', 'sales', 'ontact', 'blc']
+  },
+  captures: {
+    label: 'Captures',
+    aliases: ['Captures', 'Capture', 'BLC_Captures', 'Total_Captures', 'Captured_Applications', 'Captured_Apps', 'count_capture', 'count_captures', 'captures_count'],
+    queryHints: ['capture', 'captures']
+  },
+  netApps: {
+    label: 'Net Apps',
+    aliases: ['Net_Apps', 'Nett_Apps', 'NetApps', 'NettApps', 'BLC_Net_Apps', 'BLC_Nett_Apps', 'Total_Net_Apps', 'Total_Nett_Apps', 'count_net_apps', 'count_nett_apps', 'net_apps_count', 'nett_apps_count'],
+    queryHints: ['net', 'nett', 'app', 'apps']
+  },
+  activations: {
+    label: 'Activations',
+    aliases: ['Activations', 'BLC_Activations', 'Total_Activations', 'Activated_Sales', 'MTN_Activated_Sales', 'count_activation', 'count_activations', 'activation_count', 'activations_count'],
+    queryHints: ['activation', 'activations', 'activated']
+  }
+} satisfies Record<string, StageMetric>;
+
+const makeSequentialTransitions = (stages: StageMetric[], group: TransitionMetric['group']) => stages.slice(0, -1).map((from, index) => {
+  const to = stages[index + 1];
   return {
-    key: `${from.label}__${to.label}`,
+    key: `${group}__${from.label}__${to.label}`,
     label: `${from.label} → ${to.label}`,
+    group,
     from,
     to
-  };
+  } satisfies TransitionMetric;
 });
 
-const DEFAULT_TRANSITION_KEY = 'Valid Phone + ID__BLC Vetted';
+const CORE_TRANSITIONS = makeSequentialTransitions(CORE_STAGES.slice(0, 10), 'Lead + validation funnel');
+const MTN_TRANSITIONS = makeSequentialTransitions(CORE_STAGES.slice(9), 'MTN conversion funnel');
+const COMMERCIAL_TRANSITIONS: TransitionMetric[] = [
+  { key: 'commercial__Delivered OnTact__ONtact/BLC Sales', label: 'Delivered OnTact → ONtact/BLC Sales', group: 'Power BI / ONtact-BLC commercial funnel', from: COMMERCIAL_STAGES.delivered, to: COMMERCIAL_STAGES.blcSales },
+  { key: 'commercial__ONtact/BLC Sales__Captures', label: 'ONtact/BLC Sales → Captures', group: 'Power BI / ONtact-BLC commercial funnel', from: COMMERCIAL_STAGES.blcSales, to: COMMERCIAL_STAGES.captures },
+  { key: 'commercial__Captures__Net Apps', label: 'Captures → Net Apps', group: 'Power BI / ONtact-BLC commercial funnel', from: COMMERCIAL_STAGES.captures, to: COMMERCIAL_STAGES.netApps },
+  { key: 'commercial__Net Apps__Activations', label: 'Net Apps → Activations', group: 'Power BI / ONtact-BLC commercial funnel', from: COMMERCIAL_STAGES.netApps, to: COMMERCIAL_STAGES.activations },
+  { key: 'commercial__Captures__Activations', label: 'Captures → Activations', group: 'Power BI / ONtact-BLC commercial funnel', from: COMMERCIAL_STAGES.captures, to: COMMERCIAL_STAGES.activations },
+  { key: 'commercial__ONtact/BLC Sales__Activations', label: 'ONtact/BLC Sales → Activations', group: 'Power BI / ONtact-BLC commercial funnel', from: COMMERCIAL_STAGES.blcSales, to: COMMERCIAL_STAGES.activations }
+];
+
+const TRANSITIONS: TransitionMetric[] = [...CORE_TRANSITIONS, ...MTN_TRANSITIONS, ...COMMERCIAL_TRANSITIONS];
+const TRANSITION_GROUPS: TransitionMetric['group'][] = ['Lead + validation funnel', 'MTN conversion funnel', 'Power BI / ONtact-BLC commercial funnel'];
+const DEFAULT_TRANSITION_KEY = 'Lead + validation funnel__Valid Phone + ID__BLC Vetted';
 
 const n = (value: unknown): number => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -65,13 +105,22 @@ const ratio = (top: unknown, bottom: unknown): number => {
 };
 
 const dateKey = (record: FunnelRecord): string => {
-  const raw = record.date ?? record.call_date ?? record.entry_date ?? record.created_at ?? record.report_date;
+  const raw = record.date ?? record.call_date ?? record.entry_date ?? record.created_at ?? record.report_date ?? record.activation_date ?? record.capture_date;
   const parsed = raw ? new Date(String(raw)) : null;
   if (!parsed || Number.isNaN(parsed.getTime())) return 'Unassigned';
   return parsed.toISOString().slice(0, 10);
 };
 
+const recordMatchesQueryHints = (record: FunnelRecord, metric: StageMetric): boolean => {
+  if (!metric.queryHints?.length) return true;
+  const queryText = String(record.query ?? record.metric ?? record.report ?? record.event ?? record.stage ?? '').toLowerCase();
+  if (!queryText) return true;
+  return metric.queryHints.some((hint) => queryText.includes(hint));
+};
+
 const metricValue = (record: FunnelRecord, metric: StageMetric): number => {
+  if (!recordMatchesQueryHints(record, metric)) return 0;
+
   for (const alias of metric.aliases) {
     const value = n(record[alias]);
     if (value) return value;
@@ -88,10 +137,14 @@ const buildTransitionTrendRows = (records: FunnelRecord[], transition: Transitio
   const grouped = new Map<string, { date: string; fromVolume: number; retained: number }>();
 
   records.forEach((record) => {
+    const fromValue = metricValue(record, transition.from);
+    const toValue = metricValue(record, transition.to);
+    if (!fromValue && !toValue) return;
+
     const date = dateKey(record);
     const current = grouped.get(date) ?? { date, fromVolume: 0, retained: 0 };
-    current.fromVolume += metricValue(record, transition.from);
-    current.retained += metricValue(record, transition.to);
+    current.fromVolume += fromValue;
+    current.retained += toValue;
     grouped.set(date, current);
   });
 
@@ -171,13 +224,17 @@ export default function FunnelLeakagePanel({ records, limit = 40 }: Props) {
         <div className="panel-head">
           <div>
             <h2>Funnel stage retention trend</h2>
-            <p>Choose any funnel transition to trend retained volume versus drop-off volume over time.</p>
+            <p>Choose any lead, MTN, Power BI or ONtact/BLC transition to trend retained volume versus drop-off volume over time.</p>
           </div>
           <label className="dialer-filter-control funnel-stage-select">
             <span>Funnel transition</span>
             <select value={selectedTransitionKey} onChange={(event) => setSelectedTransitionKey(event.target.value)}>
-              {TRANSITIONS.map((transition) => (
-                <option key={transition.key} value={transition.key}>{transition.label}</option>
+              {TRANSITION_GROUPS.map((group) => (
+                <optgroup key={group} label={group}>
+                  {TRANSITIONS.filter((transition) => transition.group === group).map((transition) => (
+                    <option key={transition.key} value={transition.key}>{transition.label}</option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </label>
